@@ -1,4 +1,4 @@
--- UA Killer Hub | YBA — Версія з єдиним контролером стану ItemFarm та поетапним AutoLoad
+-- UA Killer Hub | YBA — Версія з виправленим закриттям діалогу Halloween Event
 print("[UA Killer Hub | Init] Початок запуску скрипта...")
 
 if not game:IsLoaded() then
@@ -429,7 +429,7 @@ end
 -- =======================================================
 -- ЄДИНИЙ КОНТРОЛЕР СТАНУ ITEMFARM
 -- =======================================================
-local itemFarmToggle -- посилання на UI об'єкт перемикача
+local itemFarmToggle
 
 local function startFarmThread()
     if farmThreadActive then return end
@@ -467,11 +467,9 @@ local function startFarmThread()
     end)
 end
 
--- Головна функція керування станом ItemFarm (для ручного перемикання та конфігурації)
 local function setItemFarmState(enabled)
     _G.ItemFarm = (enabled == true)
 
-    -- Синхронізація візуального стану кнопки без циклічного виклику колбека
     if itemFarmToggle and itemFarmToggle:Get() ~= _G.ItemFarm then
         itemFarmToggle:Set(_G.ItemFarm, false)
     end
@@ -491,7 +489,7 @@ local function setItemFarmState(enabled)
 end
 
 -- =======================================================
--- МАГАЗИН ТА ІВЕНТ
+-- МАГАЗИН ТА ІВЕНТ (ВЗАЄМОДІЯ З ДІАЛОГАМИ)
 -- =======================================================
 local DontSell = {
     ["Lucky Arrow"] = true, ["Christmas Present"] = true,
@@ -524,6 +522,24 @@ local function getDialogueGui()
     return pg:FindFirstChild("DialogueGui") or pg:FindFirstChild("Dialogue") or pg:FindFirstChild("DialogueBox")
 end
 
+-- Перевірка фактичної видимості GUI-елемента на екрані
+local function isGuiElementVisible(elem)
+    if not elem or not elem:IsA("GuiObject") then return false end
+    if not elem.Visible then return false end
+    if elem.AbsoluteSize.X <= 0 or elem.AbsoluteSize.Y <= 0 then return false end
+
+    local current = elem.Parent
+    while current and current:IsA("GuiObject") do
+        if not current.Visible then return false end
+        current = current.Parent
+    end
+
+    local screenGui = elem:FindFirstAncestorWhichIsA("ScreenGui")
+    if screenGui and not screenGui.Enabled then return false end
+
+    return true
+end
+
 local function isItemSold(item)
     if not item or not item.Parent or not item:IsDescendantOf(game) then return true end
     local char    = player.Character
@@ -538,7 +554,7 @@ local function autoClickDialogueButtons()
     local gui = getDialogueGui()
     if not gui then return end
     for _, btn in ipairs(gui:GetDescendants()) do
-        if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and btn.Visible then
+        if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and isGuiElementVisible(btn) then
             local txt = btn.Text or ""
             local childText = btn:FindFirstChildOfClass("TextLabel")
             if childText and childText.Text ~= "" then txt = childText.Text end
@@ -567,7 +583,7 @@ local function closeMerchantDialogue()
     if gui then
         pcall(function()
             for _, btn in ipairs(gui:GetDescendants()) do
-                if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and btn.Visible then
+                if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and isGuiElementVisible(btn) then
                     local txt = btn.Text or ""
                     local childText = btn:FindFirstChildOfClass("TextLabel")
                     if childText and childText.Text ~= "" then txt = childText.Text end
@@ -707,12 +723,12 @@ local function clickEventCandyOption()
     local gui = getDialogueGui()
     if not gui then return false end
     for _, btn in ipairs(gui:GetDescendants()) do
-        if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and btn.Visible then
+        if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and isGuiElementVisible(btn) then
             local txt = btn.Text or ""
             local childText = btn:FindFirstChildOfClass("TextLabel")
             if childText and childText.Text ~= "" then txt = childText.Text end
-            local lower = txt:lower()
-            if lower:find("turn in") or (lower:find("candy") and not lower:find("what do i do") and not lower:find("could you please")) then
+            local lowerTxt = txt:lower()
+            if lowerTxt:find("turn in") or (lowerTxt:find("candy") and not lowerTxt:find("what do i do") and not lowerTxt:find("could you please")) then
                 pcall(function()
                     if firesignal then firesignal(btn.MouseButton1Click) firesignal(btn.Activated)
                     else btn.Activated:Fire() end
@@ -724,47 +740,135 @@ local function clickEventCandyOption()
     return false
 end
 
+-- Надійне визначення активного діалогового вікна Jack із перевіркою видимості
 local function findJackDialogue()
     local gui = getDialogueGui()
     if not gui then return nil end
 
-    local hasJack, hasPoints   = false, false
-    local continueElem, pointsElem, fallbackFrame = nil, nil, nil
+    local isGuiEnabled = (gui:IsA("ScreenGui") and gui.Enabled) or gui.Visible
+    if not isGuiEnabled then return nil end
+
+    local hasJack      = false
+    local hasPoints    = false
+    local continueElem = nil
+    local pointsElem   = nil
+    local dialogueBox  = nil
+    local anyButton    = nil
 
     for _, desc in ipairs(gui:GetDescendants()) do
         if desc:IsA("TextLabel") or desc:IsA("TextButton") then
-            local txt   = desc.Text or ""
-            local lower = txt:lower()
-            if lower:find("jack") or lower:find("cauldron specter") then hasJack = true end
-            if lower:find("point") then hasPoints = true; pointsElem = desc end
-            if lower:find("click to continue") then continueElem = desc end
+            if isGuiElementVisible(desc) then
+                local txt   = desc.Text or ""
+                local lower = txt:lower()
+
+                if lower:find("jack") or lower:find("cauldron specter") then
+                    hasJack = true
+                end
+                if lower:find("point") then
+                    hasPoints = true
+                    pointsElem = desc
+                    if desc.Parent and desc.Parent:IsA("GuiObject") and desc.Parent.AbsoluteSize.Y > 40 then
+                        dialogueBox = desc.Parent
+                    end
+                end
+                if lower:find("click to continue") or (lower:find("continue") and not lower:find("option")) then
+                    continueElem = desc
+                end
+            end
         end
-        if desc:IsA("Frame") and desc.Visible and desc.AbsoluteSize.Y > 50 then
-            fallbackFrame = desc
+
+        if desc:IsA("GuiButton") and isGuiElementVisible(desc) then
+            anyButton = desc
+        end
+
+        if not dialogueBox and desc:IsA("Frame") and isGuiElementVisible(desc) and desc.AbsoluteSize.Y > 60 then
+            dialogueBox = desc
         end
     end
 
-    local visible = gui:IsA("ScreenGui") and gui.Enabled or gui.Visible
-    if visible and (hasJack or hasPoints) then
-        return { gui = gui, hasJack = hasJack, hasPoints = hasPoints,
-                 continueElem = continueElem, pointsElem = pointsElem, fallbackFrame = fallbackFrame }
+    if (hasJack or hasPoints) and (pointsElem or continueElem or dialogueBox) then
+        return {
+            gui          = gui,
+            hasJack      = hasJack,
+            hasPoints    = hasPoints,
+            continueElem = continueElem,
+            pointsElem   = pointsElem,
+            dialogueBox  = dialogueBox or (pointsElem and pointsElem.Parent) or (continueElem and continueElem.Parent),
+            anyButton    = anyButton,
+        }
     end
     return nil
 end
 
-local function clickContinueButton(targetElement)
+-- Автоматичне закриття діалогу через штатну взаємодію з інтерфейсом
+local function clickContinueButton(jackData)
+    if not jackData then return end
+
+    -- Повна діагностика знайдених елементів
+    print("[UA Killer Hub | Event] Діагностика GUI-елементів діалогу Jack:")
+    if jackData.pointsElem then
+        print(string.format("  • [PointsLabel] Class: %s | Name: '%s' | Text: '%s' | Pos: (%d, %d) | Size: (%d, %d)",
+            jackData.pointsElem.ClassName, jackData.pointsElem.Name, jackData.pointsElem.Text,
+            jackData.pointsElem.AbsolutePosition.X, jackData.pointsElem.AbsolutePosition.Y,
+            jackData.pointsElem.AbsoluteSize.X, jackData.pointsElem.AbsoluteSize.Y))
+    end
+    if jackData.continueElem then
+        print(string.format("  • [ContinueElem] Class: %s | Name: '%s' | Text: '%s' | Pos: (%d, %d) | Size: (%d, %d)",
+            jackData.continueElem.ClassName, jackData.continueElem.Name, jackData.continueElem.Text,
+            jackData.continueElem.AbsolutePosition.X, jackData.continueElem.AbsolutePosition.Y,
+            jackData.continueElem.AbsoluteSize.X, jackData.continueElem.AbsoluteSize.Y))
+    end
+    if jackData.dialogueBox then
+        print(string.format("  • [DialogueBox] Class: %s | Name: '%s' | Pos: (%d, %d) | Size: (%d, %d)",
+            jackData.dialogueBox.ClassName, jackData.dialogueBox.Name,
+            jackData.dialogueBox.AbsolutePosition.X, jackData.dialogueBox.AbsolutePosition.Y,
+            jackData.dialogueBox.AbsoluteSize.X, jackData.dialogueBox.AbsoluteSize.Y))
+    end
+    if jackData.anyButton then
+        print(string.format("  • [FoundButton] Class: %s | Name: '%s' | Text: '%s'",
+            jackData.anyButton.ClassName, jackData.anyButton.Name, tostring(jackData.anyButton.Text or "")))
+    end
+
     pcall(function()
-        if not targetElement then return end
-        if targetElement:IsA("GuiButton") then
-            if firesignal then firesignal(targetElement.MouseButton1Click) firesignal(targetElement.Activated)
-            else targetElement.Activated:Fire() end
+        -- 1. Якщо елемент мітки чи її батьківський контейнер є кнопкою — викликаємо штатні сигнали
+        local targetBtn = (jackData.continueElem and jackData.continueElem:IsA("GuiButton") and jackData.continueElem)
+            or (jackData.continueElem and jackData.continueElem.Parent and jackData.continueElem.Parent:IsA("GuiButton") and jackData.continueElem.Parent)
+            or jackData.anyButton
+
+        if targetBtn then
+            print("[UA Killer Hub | Event] Виклик сигналу кнопки: " .. targetBtn.Name)
+            if firesignal then
+                firesignal(targetBtn.MouseButton1Click)
+                firesignal(targetBtn.Activated)
+            else
+                targetBtn.Activated:Fire()
+            end
         end
-        if VirtualInputManager and targetElement:IsA("GuiObject") then
-            local absPos  = targetElement.AbsolutePosition
-            local absSize = targetElement.AbsoluteSize
-            VirtualInputManager:SendMouseButtonEvent(absPos.X + absSize.X / 2, absPos.Y + absSize.Y / 2, 0, true,  game, 0)
+
+        -- 2. Штатний клік мишкою по центру чорного діалогового вікна (де розташований текст і де клікає гравець)
+        local targetBox = jackData.dialogueBox or (jackData.pointsElem and jackData.pointsElem.Parent) or jackData.pointsElem
+        if VirtualInputManager and targetBox and targetBox:IsA("GuiObject") then
+            local absPos = targetBox.AbsolutePosition
+            local absSize = targetBox.AbsoluteSize
+            local clickX = absPos.X + absSize.X / 2
+            local clickY = absPos.Y + absSize.Y / 2
+
+            print(string.format("[UA Killer Hub | Event] Клік мишкою по центру рамки діалогу: (%d, %d)", math.floor(clickX), math.floor(clickY)))
+            VirtualInputManager:SendMouseButtonEvent(clickX, clickY, 0, true, game, 0)
+            task.wait(0.08)
+            VirtualInputManager:SendMouseButtonEvent(clickX, clickY, 0, false, game, 0)
+        end
+
+        -- 3. Додатковий клік по центру тексту Continue (якщо він окремий від головної рамки)
+        if VirtualInputManager and jackData.continueElem and jackData.continueElem:IsA("GuiObject") and jackData.continueElem ~= targetBox then
+            local absPos = jackData.continueElem.AbsolutePosition
+            local absSize = jackData.continueElem.AbsoluteSize
+            local clickX = absPos.X + absSize.X / 2
+            local clickY = absPos.Y + absSize.Y / 2
+
+            VirtualInputManager:SendMouseButtonEvent(clickX, clickY, 0, true, game, 0)
             task.wait(0.06)
-            VirtualInputManager:SendMouseButtonEvent(absPos.X + absSize.X / 2, absPos.Y + absSize.Y / 2, 0, false, game, 0)
+            VirtualInputManager:SendMouseButtonEvent(clickX, clickY, 0, false, game, 0)
         end
     end)
 end
@@ -777,37 +881,69 @@ local function submitAllCandies()
 
     local success = false
     pcall(function()
+        print("[UA Killer Hub | Event] Взаємодія з Jack...")
         remote:FireServer("PromptTriggered", eventNPC)
-        local optionFound  = false
+
+        local optionFound   = false
         local optionTimeout = tick() + 2.5
         while tick() < optionTimeout and _G.AutoEventCandy do
             if clickEventCandyOption() then optionFound = true break end
             task.wait(0.15)
         end
-        if not optionFound then return end
+        if not optionFound then
+            print("[UA Killer Hub | Event] Меню здачі цукерок не з'явилося.")
+            return
+        end
 
-        local pointsFound    = false
-        local jackData       = nil
-        local pointsTimeout  = tick() + 4.0
+        print("[UA Killer Hub | Event] Очікування повідомлення про отримані очки...")
+        local pointsFound   = false
+        local jackData      = nil
+        local pointsTimeout = tick() + 4.0
         while tick() < pointsTimeout and _G.AutoEventCandy do
             jackData = findJackDialogue()
-            if jackData and jackData.hasPoints then pointsFound = true break end
+            if jackData and jackData.hasPoints then
+                pointsFound = true
+                local msgText = jackData.pointsElem and jackData.pointsElem.Text or "Очки отримано"
+                print(string.format("[UA Killer Hub | Event] Отримано підтвердження: '%s'", msgText))
+                break
+            end
             task.wait(0.15)
         end
-        if not pointsFound or not jackData then return end
+        if not pointsFound or not jackData then
+            print("[UA Killer Hub | Event] Повідомлення про очки не з'явилося (таймаут).")
+            return
+        end
 
-        task.wait(0.3)
-        local clickTarget = jackData.continueElem or jackData.pointsElem or jackData.fallbackFrame
-        if clickTarget then
-            clickContinueButton(clickTarget)
-            local closeTimeout = tick() + 1.5
-            local isClosed     = false
-            while tick() < closeTimeout do
-                task.wait(0.15)
-                if not findJackDialogue() then isClosed = true break end
+        task.wait(0.35)
+
+        -- Спроба закриття через визначені елементи
+        clickContinueButton(jackData)
+
+        -- Перевірка моменту закриття діалогу
+        local closeTimeout = tick() + 2.0
+        local isClosed     = false
+        while tick() < closeTimeout do
+            task.wait(0.15)
+            if not findJackDialogue() then
+                isClosed = true
+                break
             end
-            if isClosed then success = true
-            else clickContinueButton(clickTarget) task.wait(0.2) end
+        end
+
+        if isClosed then
+            print("[UA Killer Hub | Event] Діалог Jack успішно закрито!")
+            success = true
+        else
+            print("[UA Killer Hub | Event] Діалог ще відкритий, виконуємо повторний клік...")
+            local retryData = findJackDialogue()
+            if retryData then
+                clickContinueButton(retryData)
+                task.wait(0.3)
+                if not findJackDialogue() then
+                    print("[UA Killer Hub | Event] Діалог Jack успішно закрито після повторного кліку!")
+                    success = true
+                end
+            end
         end
     end)
     return success
@@ -1073,7 +1209,6 @@ MinBtn.TextSize         = 12
 MinBtn.TextColor3       = Color3.fromRGB(160, 165, 175)
 Instance.new("UICorner", MinBtn).CornerRadius = UDim.new(0, 6)
 
--- Перетягування
 local dragging, dragInput, dragStart, startPos
 TitleBar.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
@@ -1530,7 +1665,7 @@ itemEspToggle = createToggle(farmPage, "Автофарм", "Увімкнути E
     _G.ItemESP = val
 end)
 
--- Ініціалізація перемикача ItemFarm із використанням єдиного контролера
+-- Ініціалізація перемикача ItemFarm через єдиний контролер
 itemFarmToggle = createToggle(farmPage, "Автофарм", "Увімкнути автофарм", _G.ItemFarm, function(value)
     manuallyChanged.ItemFarm = true
     setItemFarmState(value)
@@ -1732,7 +1867,6 @@ loadCurrentConfig = function(isAutoLoad)
     if data.AutoEventCandy   ~= nil and autoCandyToggle    then autoCandyToggle:Set(data.AutoEventCandy, true) end
     if data.AutoBuy          ~= nil and autoBuyToggle      then autoBuyToggle:Set(data.AutoBuy, true) end
 
-    -- ItemFarm відновлюється через єдиний контролер
     if data.ItemFarm ~= nil then
         setItemFarmState(data.ItemFarm == true)
     end
@@ -1763,7 +1897,7 @@ local function runSteppedAutoLoad()
     print("[UA Killer Hub | AutoLoad] Початок поетапного відновлення налаштувань...")
     showNotification("Auto Load", "Відновлення налаштувань...", 3)
 
-    -- 1. Слайдери та фільтр предметів відновлюються першими
+    -- 1. Слайдери та фільтр предметів
     if data.JumpPower      and jumpPowerSlider      then jumpPowerSlider:Set(data.JumpPower, true) end
     if data.FlySpeed       and flySpeedSlider       then flySpeedSlider:Set(data.FlySpeed, true) end
     if data.PickupDistance and pickupDistanceSlider then pickupDistanceSlider:Set(data.PickupDistance, true) end
@@ -1781,7 +1915,6 @@ local function runSteppedAutoLoad()
 
     task.wait(AUTOLOAD_STEP)
 
-    -- Порядок відновлення: ItemFarm, AutoSell, AutoEventCandy, AutoBuy, ItemESP, AntiAFK, StandaloneNoClip, AutoRespawn
     local steps = {
         {
             key     = "ItemFarm",
@@ -1866,7 +1999,6 @@ local function runSteppedAutoLoad()
 
     local totalSteps = #steps
     for i, step in ipairs(steps) do
-        -- Захист: якщо користувач вручну змінив параметр під час очікування, пропускаємо його
         if manuallyChanged[step.key] then
             print(string.format("[UA Killer Hub | AutoLoad] Крок %d/%d — '%s' пропущено (ручна зміна гравцем).", i, totalSteps, step.label))
             task.wait(AUTOLOAD_STEP)
