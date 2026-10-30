@@ -117,15 +117,20 @@ _G.SelectedItems = {
     ["Zeppeli's Hat"] = false,
 }
 
-local bannedCoordinates = {}
-local espObjects        = {}
-local itemCache         = {}
-local lastCacheRefresh  = 0
+-- =======================================================
+-- МОДУЛЬ ITEMFARM (ОНОВЛЕНИЙ ТА ОПТИМІЗОВАНИЙ)
+-- =======================================================
+local bannedCoordinates  = {}
+local failedItemAttempts = {}
+local espObjects         = {}
+local itemCache          = {}
+local lastCacheRefresh   = 0
 local CACHE_REFRESH_INTERVAL = 1.25
-local BAN_TTL           = 45
+local BAN_TTL            = 30
 
-local farmThreadActive  = false
-local farmStatusText    = "Очікування..."
+local farmThreadActive   = false
+local farmSessionId      = 0
+local farmStatusText     = "Очікування..."
 
 local flightState
 local noclipConnection
@@ -135,18 +140,18 @@ local JP_Value = 50
 local uiElementsRegistry = {}
 
 local manuallyChanged = {
-    ItemFarm        = false,
-    AutoSell        = false,
-    AutoEventCandy  = false,
-    AutoBuy         = false,
-    ItemESP         = false,
-    AntiAFK         = false,
-    StandaloneNoClip= false,
-    AutoRespawn     = false,
+    ItemFarm         = false,
+    AutoSell         = false,
+    AutoEventCandy   = false,
+    AutoBuy          = false,
+    ItemESP          = false,
+    AntiAFK          = false,
+    StandaloneNoClip = false,
+    AutoRespawn      = false,
 }
 
 -- ====================
--- ДОПОМІЖНІ ФУНКЦІЇ
+-- ДОПОМІЖНІ ФУНКЦІЇ ITEMFARM
 -- ====================
 local function setFarmStatus(text)
     farmStatusText = text
@@ -172,24 +177,44 @@ local function cleanupBannedCoordinates()
     end
 end
 
-local function isCoordinateBanned(pos)
+local function isCoordinateBanned(pos, itemPart)
     cleanupBannedCoordinates()
     for _, entry in ipairs(bannedCoordinates) do
-        if (pos - entry.pos).Magnitude < 3 then return true end
+        if (pos - entry.pos).Magnitude < 3 then
+            if entry.instance and itemPart and entry.instance == itemPart then
+                return true
+            elseif not entry.instance then
+                return true
+            end
+        end
     end
     return false
 end
 
-local function banCoordinate(pos)
-    table.insert(bannedCoordinates, { pos = pos, time = tick() })
+local function banFailedItem(item, reason)
+    if not item or not item.part then return end
+    local pos = item.position or item.part.Position
+    local partInstance = item.part
+    local itemName = item.name or "Unknown"
+
+    table.insert(bannedCoordinates, {
+        pos = pos,
+        time = tick(),
+        instance = partInstance,
+        reason = reason or "failed_pickup",
+        name = itemName,
+    })
+
+    warn(string.format("[UA Killer Hub | Blacklist] Об'єкт тимчасово заблоковано на %ds: [%s | Instance: %s] на позиції (%.1f, %.1f, %.1f) | Причина: %s",
+        BAN_TTL, itemName, tostring(partInstance), pos.X, pos.Y, pos.Z, tostring(reason)))
 end
 
 local function resolveItemFromPrompt(desc)
     if not desc or not desc:IsA("ProximityPrompt") or not desc.Parent then return nil end
 
-    local parent    = desc.Parent
-    local model     = parent:IsA("Model") and parent or parent.Parent
-    local itemName  = ""
+    local parent   = desc.Parent
+    local model    = parent:IsA("Model") and parent or parent.Parent
+    local itemName = ""
 
     if _G.SelectedItems[parent.Name] ~= nil then
         itemName = parent.Name
@@ -206,7 +231,7 @@ local function resolveItemFromPrompt(desc)
         or (model and model:FindFirstChildWhichIsA("BasePart"))
 
     if not targetPart or targetPart.Transparency >= 1 then return nil end
-    if isCoordinateBanned(targetPart.Position) or isInvalidItemPart(targetPart) then return nil end
+    if isCoordinateBanned(targetPart.Position, targetPart) or isInvalidItemPart(targetPart) then return nil end
     if not desc.Enabled then return nil end
 
     return {
@@ -230,28 +255,57 @@ local function shouldFarmItem(itemName)
     return _G.SelectedItems[itemName] == true
 end
 
-local function refreshItemCache()
+local function pruneItemCache()
+    for i = #itemCache, 1, -1 do
+        local it = itemCache[i]
+        if not it or not it.part or not it.part:IsDescendantOf(workspace)
+           or not it.prompt or not it.prompt:IsDescendantOf(workspace)
+           or isInvalidItemPart(it.parent)
+           or isCoordinateBanned(it.position, it.part) then
+            table.remove(itemCache, i)
+        end
+    end
+end
+
+local function refreshItemCache(force)
     local now = tick()
-    if now - lastCacheRefresh < CACHE_REFRESH_INTERVAL then return itemCache end
+    if not force and (now - lastCacheRefresh < CACHE_REFRESH_INTERVAL) then
+        pruneItemCache()
+        return itemCache
+    end
 
     lastCacheRefresh = now
     table.clear(itemCache)
 
-    for _, desc in ipairs(workspace:GetDescendants()) do
+    local t0 = os.clock()
+    local promptCount = 0
+    local validCount = 0
+
+    local descendants = workspace:GetDescendants()
+    for _, desc in ipairs(descendants) do
         if desc:IsA("ProximityPrompt") then
+            promptCount = promptCount + 1
             local item = resolveItemFromPrompt(desc)
             if item and shouldFarmItem(item.name) then
                 table.insert(itemCache, item)
+                validCount = validCount + 1
             end
         end
     end
+
+    local elapsed = os.clock() - t0
+    if elapsed > 0.03 or validCount > 0 then
+        print(string.format("[UA Killer Hub | Cache] Оновлення: знайдено %d валідних предметів (перевірено %d prompt) за %.4f с",
+            validCount, promptCount, elapsed))
+    end
+
     return itemCache
 end
 
 local function getNearestItem(hrp)
     local nearest, shortest = nil, math.huge
     for _, item in ipairs(refreshItemCache()) do
-        if item.prompt:IsDescendantOf(workspace) and not isInvalidItemPart(item.parent) then
+        if item.prompt:IsDescendantOf(workspace) and item.part:IsDescendantOf(workspace) and not isInvalidItemPart(item.parent) then
             local dist = (hrp.Position - item.position).Magnitude
             if dist < shortest then
                 shortest = dist
@@ -296,29 +350,51 @@ end
 
 local function getCharacter()
     local char = player.Character
-    return char, char and char:FindFirstChild("HumanoidRootPart"), char and char:FindFirstChildOfClass("Humanoid")
+    if not char or not char:IsDescendantOf(workspace) then
+        return nil, nil, nil
+    end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    return char, hrp, hum
 end
 
 local function zeroHrpVelocity(hrp)
     if not hrp then return end
-    hrp.AssemblyLinearVelocity  = Vector3.zero
-    hrp.AssemblyAngularVelocity = Vector3.zero
+    pcall(function()
+        hrp.AssemblyLinearVelocity  = Vector3.zero
+        hrp.AssemblyAngularVelocity = Vector3.zero
+    end)
 end
 
 local function cleanupFlight()
     if not flightState then return end
     if flightState.tween then pcall(function() flightState.tween:Cancel() end) end
-    if flightState.heartbeatConn then flightState.heartbeatConn:Disconnect() end
-    if flightState.cframeValue then flightState.cframeValue:Destroy() end
+    if flightState.heartbeatConn then pcall(function() flightState.heartbeatConn:Disconnect() end) end
+    if flightState.cframeValue then pcall(function() flightState.cframeValue:Destroy() end) end
     flightState = nil
+
+    local char, hrp = getCharacter()
+    if hrp then zeroHrpVelocity(hrp) end
+    if char and not _G.StandaloneNoClip and not _G.ItemFarm then
+        for _, part in ipairs(char:GetDescendants()) do
+            if part:IsA("BasePart") then
+                part.CanCollide = true
+            end
+        end
+    end
 end
 
 local function stopFlight()
     cleanupFlight()
     if noclipConnection and not _G.StandaloneNoClip and not _G.ItemFarm then
-        noclipConnection:Disconnect()
+        pcall(function() noclipConnection:Disconnect() end)
         noclipConnection = nil
     end
+    pcall(function()
+        for _, obj in ipairs(player:GetChildren()) do
+            if obj.Name == "YBA_VirtualCFrame" then obj:Destroy() end
+        end
+    end)
 end
 
 local function ensureNoClip()
@@ -342,7 +418,10 @@ local function moveToItemAndPickup(item)
     if isInvalidItemPart(item.parent) then return false end
 
     local char, hrp = getCharacter()
-    if not hrp then return false end
+    if not hrp then
+        warn("[UA Killer Hub | ItemFarm] Рух скасовано: персонаж або HumanoidRootPart відсутній на старті")
+        return false
+    end
 
     cleanupFlight()
 
@@ -353,7 +432,8 @@ local function moveToItemAndPickup(item)
 
     local targetCFrame = CFrame.new(item.part.Position + Vector3.new(0, 1.2, 0))
     local distance     = (targetCFrame.Position - hrp.Position).Magnitude
-    local tweenTime    = math.max(distance / _G.FlySpeed, 0.05)
+    local speed        = math.max(_G.FlySpeed or 150, 20)
+    local tweenTime    = math.max(distance / speed, 0.05)
 
     local tween = TweenService:Create(cframeValue, TweenInfo.new(tweenTime, Enum.EasingStyle.Linear), { Value = targetCFrame })
 
@@ -381,10 +461,13 @@ local function moveToItemAndPickup(item)
 
     tween:Play()
     local finished = false
-    tween.Completed:Once(function() finished = true end)
+    local tweenCompletedConn
+    tweenCompletedConn = tween.Completed:Once(function() finished = true end)
 
+    local flightTimeout = tick() + tweenTime + 2.0
     while not finished do
-        if not shouldContinue() or not hrp or not hrp.Parent then
+        if not shouldContinue() or not hrp or not hrp.Parent or tick() > flightTimeout then
+            if tweenCompletedConn then tweenCompletedConn:Disconnect() end
             cleanupFlight()
             return false
         end
@@ -401,28 +484,87 @@ local function moveToItemAndPickup(item)
         zeroHrpVelocity(currentHrp)
     end
 
-    task.wait(0.03)
+    task.wait(0.04)
 
-    if shouldContinue() then
-        item.prompt.RequiresLineOfSight = false
-        item.prompt.HoldDuration        = 0
-        if fireproximityprompt then fireproximityprompt(item.prompt, 0) end
+    if not shouldContinue() then cleanupFlight() return false end
+
+    -- Фіксуємо стан інвентарю перед взаємодією для точного підтвердження
+    local backpack = player:FindFirstChild("Backpack")
+    local initialBackpackCount = backpack and #backpack:GetChildren() or 0
+    local initialCharTools = 0
+    if char then
+        for _, obj in ipairs(char:GetChildren()) do
+            if obj:IsA("Tool") then initialCharTools = initialCharTools + 1 end
+        end
+    end
+    local initialTotalTools = initialBackpackCount + initialCharTools
+
+    item.prompt.RequiresLineOfSight = false
+    item.prompt.HoldDuration        = 0
+
+    local requestTime = os.clock()
+    if fireproximityprompt then
+        fireproximityprompt(item.prompt, 0)
     end
 
-    local pickedUp = not item.prompt:IsDescendantOf(workspace) or isInvalidItemPart(item.parent)
+    -- Достовірна перевірка результату підбору з вимірюванням затримки
+    local confirmed = false
+    local maxWait = 0.75
+    local checkStart = os.clock()
+
+    while (os.clock() - checkStart) < maxWait do
+        if not item.prompt:IsDescendantOf(workspace) or not item.part:IsDescendantOf(workspace) or isInvalidItemPart(item.parent) then
+            confirmed = true
+            break
+        end
+        if not item.prompt.Enabled then
+            confirmed = true
+            break
+        end
+        local curBackpack = backpack and #backpack:GetChildren() or 0
+        local curCharTools = 0
+        if char then
+            for _, obj in ipairs(char:GetChildren()) do
+                if obj:IsA("Tool") then curCharTools = curCharTools + 1 end
+            end
+        end
+        if (curBackpack + curCharTools) > initialTotalTools then
+            confirmed = true
+            break
+        end
+        task.wait(0.04)
+    end
+
+    local latency = os.clock() - requestTime
     cleanupFlight()
-    return pickedUp
+
+    if confirmed then
+        print(string.format("[UA Killer Hub | ItemFarm] Підтверджено підбір [%s] за %.3f с (Instance: %s)",
+            item.name, latency, tostring(item.part)))
+        return true
+    else
+        warn(string.format("[UA Killer Hub | ItemFarm] Підбір [%s] не підтверджено сервером за %.3f с (Instance: %s)",
+            item.name, latency, tostring(item.part)))
+        return false
+    end
 end
 
 local function tryRespawn()
     if not _G.AutoRespawn then return end
-    local _, _, hum = getCharacter()
+    local char, _, hum = getCharacter()
     if hum and hum.Health <= 0 then
-        pcall(function()
-            local remote = ReplicatedStorage:FindFirstChild("Remotes")
-            remote = remote and remote:FindFirstChild("LoadCharacter")
-            if remote then remote:FireServer() end
-        end)
+        local remotesFolder = ReplicatedStorage:FindFirstChild("Remotes")
+        local remote = remotesFolder and remotesFolder:FindFirstChild("LoadCharacter")
+        if remote then
+            local ok, err = pcall(function() remote:FireServer() end)
+            if ok then
+                print("[UA Killer Hub | Respawn] Відправлено запит LoadCharacter для респавну.")
+            else
+                warn("[UA Killer Hub | Respawn] Помилка виклику LoadCharacter: " .. tostring(err))
+            end
+        else
+            warn("[UA Killer Hub | Respawn] Remote LoadCharacter не знайдено в ReplicatedStorage.Remotes.")
+        end
     end
 end
 
@@ -434,9 +576,12 @@ local itemFarmToggle
 local function startFarmThread()
     if farmThreadActive then return end
     farmThreadActive = true
+    farmSessionId    = farmSessionId + 1
+    local currentSession = farmSessionId
+
     task.spawn(function()
         setFarmStatus("Пошук предметів...")
-        while _G.ItemFarm and farmThreadActive do
+        while _G.ItemFarm and farmThreadActive and (farmSessionId == currentSession) do
             tryRespawn()
             local _, hrp = getCharacter()
             if not hrp then
@@ -450,20 +595,39 @@ local function startFarmThread()
                 task.wait(0.35)
                 continue
             end
+
             setFarmStatus("Лечу до: " .. targetItem.name)
-            if moveToItemAndPickup(targetItem) then
-                banCoordinate(targetItem.position)
-                if espObjects[targetItem.part] then
-                    espObjects[targetItem.part]:Destroy()
-                    espObjects[targetItem.part] = nil
+            local itemPart = targetItem.part
+            local success = moveToItemAndPickup(targetItem)
+
+            if success then
+                failedItemAttempts[itemPart] = nil
+                if espObjects[itemPart] then
+                    pcall(function() espObjects[itemPart]:Destroy() end)
+                    espObjects[itemPart] = nil
                 end
                 lastCacheRefresh = 0
+            else
+                local attempts = (failedItemAttempts[itemPart] or 0) + 1
+                failedItemAttempts[itemPart] = attempts
+                if attempts >= 2 then
+                    banFailedItem(targetItem, "2_failed_attempts")
+                    failedItemAttempts[itemPart] = nil
+                    lastCacheRefresh = 0
+                else
+                    warn(string.format("[UA Killer Hub | ItemFarm] Спроба %d/2 для [%s] неуспішна, наступна спроба пізніше",
+                        attempts, targetItem.name))
+                    task.wait(0.15)
+                end
             end
             task.wait(0.08)
         end
-        farmThreadActive = false
-        setFarmStatus("Зупинено")
-        stopFlight()
+
+        if farmSessionId == currentSession then
+            farmThreadActive = false
+            setFarmStatus("Зупинено")
+            stopFlight()
+        end
     end)
 end
 
@@ -477,6 +641,7 @@ local function setItemFarmState(enabled)
     if _G.ItemFarm then
         startFarmThread()
     else
+        farmSessionId    = farmSessionId + 1
         farmThreadActive = false
         setFarmStatus("Зупинено")
         stopFlight()
@@ -1015,6 +1180,12 @@ task.spawn(function()
     while true do
         task.wait(0.8)
         if _G.ItemESP then
+            for part, gui in pairs(espObjects) do
+                if not part or not part.Parent or not part:IsDescendantOf(workspace) then
+                    if gui then pcall(function() gui:Destroy() end) end
+                    espObjects[part] = nil
+                end
+            end
             for _, item in ipairs(refreshItemCache()) do applyESP(item.part, item.name) end
         else
             clearESP()
@@ -1066,8 +1237,8 @@ ScreenGui.Parent         = targetGuiParent
 
 local MainFrame = Instance.new("Frame")
 MainFrame.Name             = "MainFrame"
-MainFrame.Size             = UDim2.new(0, 520, 0, 400)
-MainFrame.Position         = UDim2.new(0.5, -260, 0.5, -200)
+MainFrame.Size             = UDim2.new(0, 520, 0.5, -300)
+MainFrame.Position         = UDim2.new(0.5, -260, 0, 100)
 MainFrame.BackgroundColor3 = Color3.fromRGB(23, 25, 31)
 MainFrame.BorderSizePixel  = 0
 MainFrame.ClipsDescendants = true
@@ -1656,7 +1827,7 @@ flySpeedSlider = createSlider(farmPage, "Автофарм", "Швидкість 
     _G.FlySpeed = val
 end)
 
-pickupDistanceSlider = createSlider(farmPage, "Автофарм", "Дистанція підбору", 2, 8, 0.5, _G.PickupDistance, function(val)
+pickupDistanceSlider = createSlider(farmPage, "Автофарм", "Дистанція підбору (Неактивно)", 2, 8, 0.5, _G.PickupDistance, function(val)
     _G.PickupDistance = val
 end)
 
