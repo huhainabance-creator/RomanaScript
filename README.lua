@@ -1005,8 +1005,6 @@ local function clickContinueButton(jackData)
             if firesignal then
                 firesignal(targetBtn.MouseButton1Click)
                 firesignal(targetBtn.Activated)
-            else
-                targetBtn.Activated:Fire()
             end
         end
 
@@ -1079,7 +1077,10 @@ local function submitAllCandies()
             return
         end
 
-        task.wait(0.35)
+        task.wait(1.5)
+        if not _G.AutoEventCandy then return end
+        jackData = findJackDialogue()
+        if not jackData then return end
 
         -- Спроба закриття через визначені елементи
         clickContinueButton(jackData)
