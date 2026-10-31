@@ -3,217 +3,109 @@
 print("[UA Killer Hub | Init] Початок запуску скрипта...")
 
 if not game:IsLoaded() then
-
     print("[UA Killer Hub | Init] Очікування повного завантаження гри...")
-
     game.Loaded:Wait()
-
 end
-
 print("[UA Killer Hub | Init] Гра завантажена.")
 
 local Players = game:GetService("Players")
-
 local RunService = game:GetService("RunService")
-
 local TweenService = game:GetService("TweenService")
-
 local VirtualUser = game:GetService("VirtualUser")
-
 local VirtualInputManager = game:GetService("VirtualInputManager")
-
 local UserInputService = game:GetService("UserInputService")
-
 local HttpService = game:GetService("HttpService")
 
 local player = Players.LocalPlayer
-
 while not player do
-
     task.wait(0.1)
-
     player = Players.LocalPlayer
-
 end
-
 print("[UA Killer Hub | Init] Гравець ідентифікований: " .. player.Name)
 
 local autoLoadFile = "UAKillerHub/YBA_AutoLoad.txt"
-
 local configFile   = "UAKillerHub/YBA_Config.json"
-
 local shouldAutoLoad = false
 
 -- =======================================================
-
 -- БЕЗПЕЧНА АКТИВАЦІЯ ITEM MAGNITUDE BYPASS
+-- =======================================================
+pcall(function()
+    if hookmetamethod and newcclosure and checkcaller and getcallingscript then
+        local OldIndexItem;
+        OldIndexItem = hookmetamethod(game, "__index", newcclosure(function(self, Key)
+            if not checkcaller() and typeof(Key) == "string" and Key:lower() == "magnitude" then
+                local calling = getcallingscript()
+                if calling and calling.Name == "ItemSpawn" then
+                    return 0
+                end
+            end
+            return OldIndexItem(self, Key)
+        end))
+        print("[UA Killer Hub | Bypass] Item Magnitude Bypass активовано.")
+    end
+end)
 
 -- =======================================================
-
+-- БЕЗПЕЧНА АКТИВАЦІЯ CRASH & WALKSPEED BYPASS
+-- =======================================================
 pcall(function()
-
-    if hookmetamethod and newcclosure and checkcaller and getcallingscript then
-
-        local char = player.Character or player.CharacterAdded:Wait()
-
-        local primary = char:WaitForChild("HumanoidRootPart", 3) or char.PrimaryPart
-
-        if primary then
-
-            local OldIndexItem
-
-            OldIndexItem = hookmetamethod(primary.Position, "__index", newcclosure(function(self, Key)
-
-                if not checkcaller() and Key:lower() == "magnitude" and getcallingscript().Name == "ItemSpawn" then
-
-                    return 0
-
+    local ReplicatedStorage = game:GetService("ReplicatedStorage")
+    local FunctionLibraryModule = ReplicatedStorage:FindFirstChild("Modules") and ReplicatedStorage.Modules:FindFirstChild("FunctionLibrary")
+    if FunctionLibraryModule then
+        local FunctionLibrary = require(FunctionLibraryModule)
+        if FunctionLibrary and FunctionLibrary.pcall and getupvalues then
+            local OldPcall = FunctionLibrary.pcall
+            FunctionLibrary.pcall = function(...)
+                local args = {...}
+                if type(args[1]) == "function" then
+                    local ups = getupvalues(args[1])
+                    if ups and #ups == 11 then
+                        return
+                    end
                 end
-
-                return OldIndexItem(self, Key)
-
-            end))
-
-            print("[UA Killer Hub | Init] Item Magnitude Bypass активовано.")
-
+                return OldPcall(...)
+            end
+            print("[UA Killer Hub | Bypass] WalkSpeed/Crash Bypass активовано.")
         end
-
     end
-
 end)
 
--- ====================================================
-
--- БЕЗПЕЧНИЙ CRASH & WALKSPEED BYPASS
-
--- ====================================================
-
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-
+-- =======================================================
+-- ПЕРЕВІРКА ТА ІНІЦІАЛІЗАЦІЯ ФАЙЛІВ КОНФІГУРАЦІЇ
+-- =======================================================
 pcall(function()
-
-    local FunctionLibrary = require(
-
-        ReplicatedStorage:WaitForChild("Modules", 2):WaitForChild("FunctionLibrary", 2)
-
-    )
-
-    local OldPcall = FunctionLibrary.pcall
-
-    FunctionLibrary.pcall = function(...)
-
-        local args = { ... }
-
-        if type(args[1]) == "function" and #getupvalues(args[1]) == 11 then
-
-            return
-
-        end
-
-        return OldPcall(...)
-
-    end
-
-    print("[UA Killer Hub | Init] WalkSpeed/Crash Bypass активовано.")
-
-end)
-
--- Ініціалізація папки та флагу авто-завантаження
-
-pcall(function()
-
-    if makefolder and not isfolder("UAKillerHub") then
-
+    if makefolder and isfolder and not isfolder("UAKillerHub") then
         makefolder("UAKillerHub")
-
     end
-
     if isfile and isfile(autoLoadFile) then
-
-        shouldAutoLoad = (readfile(autoLoadFile) == "true")
-
+        if readfile then
+            shouldAutoLoad = (readfile(autoLoadFile) == "true")
+        end
     elseif writefile then
-
         writefile(autoLoadFile, "false")
-
     end
-
 end)
 
--- ====================
+-- =======================================================
+-- ГЛОБАЛЬНІ ЗМІННІ СТАНУ ТА НАЛАШТУВАНЬ
+-- =======================================================
+_G.ItemFarm         = false
+_G.FarmSpeed        = 60
+_G.ItemDistance     = 5000
+_G.ItemESP          = false
+_G.SelectedItems    = {}
+_G.AntiAFK          = false
+_G.StandaloneNoClip = false
+_G.AutoRespawn      = true
+_G.AutoSell         = false
+_G.AutoEventCandy   = false
+_G.AutoBuy          = false
 
--- ГЛОБАЛЬНІ НАЛАШТУВАННЯ
-
--- ====================
-
-_G.AutoSell        = false
-
-_G.AutoEventCandy  = false
-
-_G.AutoBuy         = false
-
-_G.ItemFarm        = false
-
-_G.ItemESP         = false
-
-_G.FlySpeed        = 150
-
-_G.PickupDistance  = 3.5
-
-_G.AntiAFK         = false
-
-_G.StandaloneNoClip= false
-
-_G.AutoRespawn     = true
-
-_G.SelectedItems = {
-
-    ["Ancient Scroll"] = false,
-
-    ["Blue Candy"] = false,
-
-    ["Caesar's Headband"] = false,
-
-    ["Christmas Present"] = false,
-
-    ["Clackers"] = false,
-
-    ["Diamond"] = false,
-
-    ["Dio's Diary"] = false,
-
-    ["Gold Coin"] = false,
-
-    ["Gold Umbrella"] = false,
-
-    ["Green Candy"] = false,
-
-    ["Lucky Arrow"] = false,
-
-    ["Lucky Stone Mask"] = false,
-
-    ["Mysterious Arrow"] = false,
-
-    ["Pure Rokakaka"] = false,
-
-    ["Quinton's Glove"] = false,
-
-    ["Red Candy"] = false,
-
-    ["Rib Cage of The Saint's Corpse"] = false,
-
-    ["Rokakaka"] = false,
-
-    ["Steel Ball"] = false,
-
-    ["Stone Mask"] = false,
-
-    ["Yellow Candy"] = false,
-
-    ["Zepellin's Headband"] = false,
-
-    ["Zeppeli's Hat"] = false,
-
+local defaultSettings = {
+    FarmSpeed    = 60,
+    ItemDistance = 5000,
+    AutoRespawn  = true,
 }
 
 local bannedCoordinates  = {}
@@ -246,555 +138,91 @@ local manuallyChanged = {
     AutoRespawn      = false,
 }
 
--- ====================
--- ДОПОМІЖНІ ФУНКЦІЇ ITEMFARM
--- ====================
 local function setFarmStatus(text)
     farmStatusText = text
 end
 
-local function isInvalidItemPart(obj)
-    if not obj then return true end
-    local current = obj
-    while current and current ~= workspace do
-        if current:IsA("Backpack") then return true end
-        if current:IsA("Model") and current:FindFirstChildOfClass("Humanoid") then return true end
-        current = current.Parent
-    end
-    return false
+local function markManuallyChanged(flag)
+    manuallyChanged[flag] = true
 end
 
-local function cleanupBannedCoordinates()
-    local now = tick()
-    for i = #bannedCoordinates, 1, -1 do
-        if now - bannedCoordinates[i].time > BAN_TTL then
-            table.remove(bannedCoordinates, i)
-        end
-    end
-end
-
-local function isCoordinateBanned(pos, itemPart)
-    cleanupBannedCoordinates()
-    for _, entry in ipairs(bannedCoordinates) do
-        if (pos - entry.pos).Magnitude < 3 then
-            if entry.instance and itemPart and entry.instance == itemPart then
-                return true
-            elseif not entry.instance then
-                return true
-            end
-        end
-    end
-    return false
-end
-
-local function banFailedItem(item, reason)
-    if not item or not item.part then return end
-    local pos = item.position or item.part.Position
-    local partInstance = item.part
-    local itemName = item.name or "Unknown"
-
-    table.insert(bannedCoordinates, {
-        pos = pos,
-        time = tick(),
-        instance = partInstance,
-        reason = reason or "failed_pickup",
-        name = itemName,
-    })
-
-    warn(string.format("[UA Killer Hub | Blacklist] Об'єкт тимчасово заблоковано на %ds: [%s | Instance: %s] на позиції (%.1f, %.1f, %.1f) | Причина: %s",
-        BAN_TTL, itemName, tostring(partInstance), pos.X, pos.Y, pos.Z, tostring(reason)))
-end
-
-local function resolveItemFromPrompt(desc)
-    if not desc or not desc:IsA("ProximityPrompt") or not desc.Parent then return nil end
-
-    local parent   = desc.Parent
-    local model    = parent:IsA("Model") and parent or parent.Parent
-    local itemName = ""
-
-    if _G.SelectedItems[parent.Name] ~= nil then
-        itemName = parent.Name
-    elseif model and _G.SelectedItems[model.Name] ~= nil then
-        itemName = model.Name
-    elseif desc.ObjectText and _G.SelectedItems[desc.ObjectText] ~= nil then
-        itemName = desc.ObjectText
-    end
-
-    if itemName == "" then return nil end
-
-    local targetPart = parent:IsA("BasePart") and parent
-        or parent:FindFirstChildWhichIsA("BasePart")
-        or (model and model:FindFirstChildWhichIsA("BasePart"))
-
-    if not targetPart or targetPart.Transparency >= 1 then return nil end
-    if isCoordinateBanned(targetPart.Position, targetPart) or isInvalidItemPart(targetPart) then return nil end
-    if not desc.Enabled then return nil end
-
-    return {
-        prompt   = desc,
-        part     = targetPart,
-        parent   = parent,
-        name     = itemName,
-        position = targetPart.Position,
-    }
-end
-
-local function anyItemSelected()
-    for _, v in pairs(_G.SelectedItems) do
-        if v then return true end
-    end
-    return false
-end
-
-local function shouldFarmItem(itemName)
-    if not anyItemSelected() then return true end
-    return _G.SelectedItems[itemName] == true
-end
-
-local function pruneItemCache()
-    for i = #itemCache, 1, -1 do
-        local it = itemCache[i]
-        if not it or not it.part or not it.part:IsDescendantOf(workspace)
-           or not it.prompt or not it.prompt:IsDescendantOf(workspace)
-           or isInvalidItemPart(it.parent)
-           or isCoordinateBanned(it.position, it.part) then
-            table.remove(itemCache, i)
-        end
-    end
-end
-
-local function refreshItemCache(force)
-    local now = tick()
-    if not force and (now - lastCacheRefresh < CACHE_REFRESH_INTERVAL) then
-        pruneItemCache()
-        return itemCache
-    end
-
-    lastCacheRefresh = now
-    table.clear(itemCache)
-
-    local t0 = os.clock()
-    local promptCount = 0
-    local validCount = 0
-
-    local descendants = workspace:GetDescendants()
-    for _, desc in ipairs(descendants) do
-        if desc:IsA("ProximityPrompt") then
-            promptCount = promptCount + 1
-            local item = resolveItemFromPrompt(desc)
-            if item and shouldFarmItem(item.name) then
-                table.insert(itemCache, item)
-                validCount = validCount + 1
-            end
-        end
-    end
-
-    local elapsed = os.clock() - t0
-    if elapsed > 0.03 or validCount > 0 then
-        print(string.format("[UA Killer Hub | Cache] Оновлення: знайдено %d валідних предметів (перевірено %d prompt) за %.4f с",
-            validCount, promptCount, elapsed))
-    end
-
-    return itemCache
-end
-
-local function getNearestItem(hrp)
-    local nearest, shortest = nil, math.huge
-    for _, item in ipairs(refreshItemCache()) do
-        if item.prompt:IsDescendantOf(workspace) and item.part:IsDescendantOf(workspace) and not isInvalidItemPart(item.parent) then
-            local dist = (hrp.Position - item.position).Magnitude
-            if dist < shortest then
-                shortest = dist
-                nearest  = item
-            end
-        end
-    end
-    return nearest, shortest
-end
-
-local function applyESP(part, name)
-    if espObjects[part] then return end
-    if not part or part.Transparency == 1 or isCoordinateBanned(part.Position) or isInvalidItemPart(part) then return end
-
-    local bgui = Instance.new("BillboardGui")
-    bgui.Name        = "YBA_Item_ESP"
-    bgui.AlwaysOnTop = true
-    bgui.Size        = UDim2.new(0, 140, 0, 32)
-    bgui.Adornee     = part
-
-    local text = Instance.new("TextLabel")
-    text.Parent              = bgui
-    text.BackgroundTransparency = 1
-    text.Size                = UDim2.new(1, 0, 1, 0)
-    text.Text                = name
-    text.TextColor3          = Color3.fromRGB(139, 124, 246)
-    text.TextSize            = 13
-    text.Font                = Enum.Font.GothamBold
-    text.TextStrokeTransparency = 0
-
-    bgui.Parent       = part
-    espObjects[part]  = bgui
-end
-
-local function clearESP()
-    for part, gui in pairs(espObjects) do
-        if gui then gui:Destroy() end
-        espObjects[part] = nil
-    end
-    table.clear(espObjects)
-end
-
+-- =======================================================
+-- ДОПОМІЖНІ ФУНКЦІЇ ДЛЯ ГРАВЦЯ ТА ПЕРСОНАЖА
+-- =======================================================
 local function getCharacter()
-    local char = player.Character
-    if not char or not char:IsDescendantOf(workspace) then
-        return nil, nil, nil
-    end
-    local hrp = char:FindFirstChild("HumanoidRootPart")
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    return char, hrp, hum
-end
-
-local function zeroHrpVelocity(hrp)
-    if not hrp then return end
-    pcall(function()
-        hrp.AssemblyLinearVelocity  = Vector3.zero
-        hrp.AssemblyAngularVelocity = Vector3.zero
-    end)
-end
-
-local function cleanupFlight()
-    if not flightState then return end
-    if flightState.tween then pcall(function() flightState.tween:Cancel() end) end
-    if flightState.heartbeatConn then pcall(function() flightState.heartbeatConn:Disconnect() end) end
-    if flightState.cframeValue then pcall(function() flightState.cframeValue:Destroy() end) end
-    flightState = nil
-
-    local char, hrp = getCharacter()
-    if hrp then zeroHrpVelocity(hrp) end
-    if char and not _G.StandaloneNoClip and not _G.ItemFarm then
-        for _, part in ipairs(char:GetDescendants()) do
-            if part:IsA("BasePart") then
-                part.CanCollide = true
-            end
-        end
-    end
-end
-
-local function stopFlight()
-    cleanupFlight()
-    if noclipConnection and not _G.StandaloneNoClip and not _G.ItemFarm then
-        pcall(function() noclipConnection:Disconnect() end)
-        noclipConnection = nil
-    end
-    pcall(function()
-        for _, obj in ipairs(player:GetChildren()) do
-            if obj.Name == "YBA_VirtualCFrame" then obj:Destroy() end
-        end
-    end)
+    local char = player.Character or player.CharacterAdded:Wait()
+    local root = char:WaitForChild("HumanoidRootPart", 5) or char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart
+    local hum  = char:WaitForChild("Humanoid", 5) or char:FindFirstChildOfClass("Humanoid")
+    return char, root, hum
 end
 
 local function ensureNoClip()
     if noclipConnection then return end
     noclipConnection = RunService.Stepped:Connect(function()
-        if not _G.ItemFarm and not _G.StandaloneNoClip then return end
+        if not _G.ItemFarm and not _G.StandaloneNoClip then
+            if noclipConnection then
+                noclipConnection:Disconnect()
+                noclipConnection = nil
+            end
+            return
+        end
         local char = player.Character
-        if not char then return end
-        local hrp = char:FindFirstChild("HumanoidRootPart")
-        for _, part in ipairs(char:GetDescendants()) do
-            if part:IsA("BasePart") and part ~= hrp then
-                part.CanCollide = false
-            end
-        end
-    end)
-end
-
-local function moveToItemAndPickup(item)
-    if not item or not item.part or not item.part:IsDescendantOf(workspace) then return false end
-    if not item.prompt or not item.prompt:IsDescendantOf(workspace) then return false end
-    if isInvalidItemPart(item.parent) then return false end
-
-    local char, hrp = getCharacter()
-    if not hrp then
-        warn("[UA Killer Hub | ItemFarm] Рух скасовано: персонаж або HumanoidRootPart відсутній на старті")
-        return false
-    end
-
-    cleanupFlight()
-
-    local cframeValue = Instance.new("CFrameValue")
-    cframeValue.Name   = "YBA_VirtualCFrame"
-    cframeValue.Value  = hrp.CFrame
-    cframeValue.Parent = player
-
-    local targetCFrame = CFrame.new(item.part.Position + Vector3.new(0, 1.2, 0))
-    local distance     = (targetCFrame.Position - hrp.Position).Magnitude
-    local speed        = math.max(_G.FlySpeed or 150, 20)
-    local tweenTime    = math.max(distance / speed, 0.05)
-
-    local tween = TweenService:Create(cframeValue, TweenInfo.new(tweenTime, Enum.EasingStyle.Linear), { Value = targetCFrame })
-
-    local heartbeatConn = RunService.Heartbeat:Connect(function()
-        if not char or not char.Parent then return end
-        local currentHrp = char:FindFirstChild("HumanoidRootPart")
-        if not currentHrp or not cframeValue.Parent then return end
-        currentHrp.CFrame = cframeValue.Value
-        zeroHrpVelocity(currentHrp)
-        for _, part in ipairs(char:GetDescendants()) do
-            if part:IsA("BasePart") and part ~= currentHrp then
-                part.CanCollide = false
-            end
-        end
-    end)
-
-    flightState = { cframeValue = cframeValue, tween = tween, heartbeatConn = heartbeatConn }
-
-    local function shouldContinue()
-        return _G.ItemFarm
-            and item.part:IsDescendantOf(workspace)
-            and not isInvalidItemPart(item.part)
-            and item.prompt:IsDescendantOf(workspace)
-    end
-
-    tween:Play()
-    local finished = false
-    local tweenCompletedConn
-    tweenCompletedConn = tween.Completed:Once(function() finished = true end)
-
-    local flightTimeout = tick() + tweenTime + 2.0
-    while not finished do
-        if not shouldContinue() or not hrp or not hrp.Parent or tick() > flightTimeout then
-            if tweenCompletedConn then tweenCompletedConn:Disconnect() end
-            cleanupFlight()
-            return false
-        end
-        RunService.Heartbeat:Wait()
-    end
-
-    if not shouldContinue() then cleanupFlight() return false end
-
-    targetCFrame      = CFrame.new(item.part.Position + Vector3.new(0, 1.2, 0))
-    cframeValue.Value = targetCFrame
-    local currentHrp  = char:FindFirstChild("HumanoidRootPart")
-    if currentHrp then
-        currentHrp.CFrame = targetCFrame
-        zeroHrpVelocity(currentHrp)
-    end
-
-    task.wait(0.04)
-
-    if not shouldContinue() then cleanupFlight() return false end
-
-    -- Фіксуємо стан інвентарю перед взаємодією для точного підтвердження
-    local backpack = player:FindFirstChild("Backpack")
-    local initialBackpackCount = backpack and #backpack:GetChildren() or 0
-    local initialCharTools = 0
-    if char then
-        for _, obj in ipairs(char:GetChildren()) do
-            if obj:IsA("Tool") then initialCharTools = initialCharTools + 1 end
-        end
-    end
-    local initialTotalTools = initialBackpackCount + initialCharTools
-
-    item.prompt.RequiresLineOfSight = false
-    item.prompt.HoldDuration        = 0
-
-    local requestTime = os.clock()
-    if fireproximityprompt then
-        fireproximityprompt(item.prompt, 0)
-    end
-
-    -- Достовірна перевірка результату підбору з вимірюванням затримки
-    local confirmed = false
-    local maxWait = 0.75
-    local checkStart = os.clock()
-
-    while (os.clock() - checkStart) < maxWait do
-        if not item.prompt:IsDescendantOf(workspace) or not item.part:IsDescendantOf(workspace) or isInvalidItemPart(item.parent) then
-            confirmed = true
-            break
-        end
-        if not item.prompt.Enabled then
-            confirmed = true
-            break
-        end
-        local curBackpack = backpack and #backpack:GetChildren() or 0
-        local curCharTools = 0
         if char then
-            for _, obj in ipairs(char:GetChildren()) do
-                if obj:IsA("Tool") then curCharTools = curCharTools + 1 end
-            end
-        end
-        if (curBackpack + curCharTools) > initialTotalTools then
-            confirmed = true
-            break
-        end
-        task.wait(0.04)
-    end
-
-    local latency = os.clock() - requestTime
-    cleanupFlight()
-
-    if confirmed then
-        print(string.format("[UA Killer Hub | ItemFarm] Підтверджено підбір [%s] за %.3f с (Instance: %s)",
-            item.name, latency, tostring(item.part)))
-        return true
-    else
-        warn(string.format("[UA Killer Hub | ItemFarm] Підбір [%s] не підтверджено сервером за %.3f с (Instance: %s)",
-            item.name, latency, tostring(item.part)))
-        return false
-    end
-end
-
-local function tryRespawn()
-    if not _G.AutoRespawn then return end
-    local char, _, hum = getCharacter()
-    if hum and hum.Health <= 0 then
-        local remotesFolder = ReplicatedStorage:FindFirstChild("Remotes")
-        local remote = remotesFolder and remotesFolder:FindFirstChild("LoadCharacter")
-        if remote then
-            local ok, err = pcall(function() remote:FireServer() end)
-            if ok then
-                print("[UA Killer Hub | Respawn] Відправлено запит LoadCharacter для респавну.")
-            else
-                warn("[UA Killer Hub | Respawn] Помилка виклику LoadCharacter: " .. tostring(err))
-            end
-        else
-            warn("[UA Killer Hub | Respawn] Remote LoadCharacter не знайдено в ReplicatedStorage.Remotes.")
-        end
-    end
-end
-
--- =======================================================
--- ЄДИНИЙ КОНТРОЛЕР СТАНУ ITEMFARM
--- =======================================================
-local itemFarmToggle
-
-local function startFarmThread()
-    if farmThreadActive then return end
-    farmThreadActive = true
-    farmSessionId    = farmSessionId + 1
-    local currentSession = farmSessionId
-
-    task.spawn(function()
-        setFarmStatus("Пошук предметів...")
-        while _G.ItemFarm and farmThreadActive and (farmSessionId == currentSession) do
-            tryRespawn()
-            local _, hrp = getCharacter()
-            if not hrp then
-                setFarmStatus("Очікування персонажа...")
-                task.wait(0.5)
-                continue
-            end
-            local targetItem = getNearestItem(hrp)
-            if not targetItem then
-                setFarmStatus("Предметів не знайдено")
-                task.wait(0.35)
-                continue
-            end
-
-            setFarmStatus("Лечу до: " .. targetItem.name)
-            local itemPart = targetItem.part
-            local success = moveToItemAndPickup(targetItem)
-
-            if success then
-                failedItemAttempts[itemPart] = nil
-                if espObjects[itemPart] then
-                    pcall(function() espObjects[itemPart]:Destroy() end)
-                    espObjects[itemPart] = nil
-                end
-                lastCacheRefresh = 0
-            else
-                local attempts = (failedItemAttempts[itemPart] or 0) + 1
-                failedItemAttempts[itemPart] = attempts
-                if attempts >= 2 then
-                    banFailedItem(targetItem, "2_failed_attempts")
-                    failedItemAttempts[itemPart] = nil
-                    lastCacheRefresh = 0
-                else
-                    warn(string.format("[UA Killer Hub | ItemFarm] Спроба %d/2 для [%s] неуспішна, наступна спроба пізніше",
-                        attempts, targetItem.name))
-                    task.wait(0.15)
+            for _, part in ipairs(char:GetDescendants()) do
+                if part:IsA("BasePart") and part.CanCollide then
+                    part.CanCollide = false
                 end
             end
-            task.wait(0.08)
-        end
-
-        if farmSessionId == currentSession then
-            farmThreadActive = false
-            setFarmStatus("Зупинено")
-            stopFlight()
         end
     end)
 end
 
-local function setItemFarmState(enabled)
-    _G.ItemFarm = (enabled == true)
-
-    if itemFarmToggle and itemFarmToggle:Get() ~= _G.ItemFarm then
-        itemFarmToggle:Set(_G.ItemFarm, false)
+local function cleanupFlight()
+    if flightState then
+        pcall(function()
+            if flightState.bodyPos and flightState.bodyPos.Parent then
+                flightState.bodyPos:Destroy()
+            end
+            if flightState.bodyGyro and flightState.bodyGyro.Parent then
+                flightState.bodyGyro:Destroy()
+            end
+            if flightState.heartbeatConn then
+                flightState.heartbeatConn:Disconnect()
+            end
+        end)
+        flightState = nil
     end
 
-    if _G.ItemFarm then
-        startFarmThread()
-    else
-        farmSessionId    = farmSessionId + 1
-        farmThreadActive = false
-        setFarmStatus("Зупинено")
-        stopFlight()
+    local char, root, hum = getCharacter()
+    if hum then
+        hum.PlatformStand = false
     end
-
-    print(string.format("[UA Killer Hub | Farm] Стан синхронізовано: _G.ItemFarm=%s, farmThreadActive=%s, GUI=%s",
-        tostring(_G.ItemFarm),
-        tostring(farmThreadActive),
-        tostring(itemFarmToggle and itemFarmToggle:Get())))
+    if root then
+        root.AssemblyLinearVelocity = Vector3.zero
+        root.AssemblyAngularVelocity = Vector3.zero
+    end
 end
+
+player.CharacterAdded:Connect(function(char)
+    cleanupFlight()
+    task.wait(0.5)
+    local hum = char:WaitForChild("Humanoid", 5)
+    if hum then
+        hum.Died:Connect(function()
+            cleanupFlight()
+            if _G.AutoRespawn then
+                task.wait(0.2)
+                pcall(function()
+                    player:LoadCharacter()
+                end)
+            end
+        end)
+    end
+end)
 
 -- =======================================================
-
--- МАГАЗИН ТА ІВЕНТ (ВЗАЄМОДІЯ З ДІАЛОГАМИ)
-
+-- СИСТЕМА ДІАЛОГОВОГО GUI ТА ВИЗНАЧЕННЯ ВИДИМОСТІ
 -- =======================================================
-
-local DontSell = {
-
-    ["Lucky Arrow"] = true, ["Christmas Present"] = true,
-
-    ["Green Candy"] = true, ["Yellow Candy"] = true,
-
-    ["Blue Candy"]  = true, ["Red Candy"]    = true,
-
-    ["Lucky Stone Mask"] = true,
-
-}
-
-local EventCandies = {
-
-    ["Green Candy"] = true, ["Yellow Candy"] = true,
-
-    ["Blue Candy"]  = true, ["Red Candy"]    = true,
-
-}
-
-local sellQueue = {}
-
-local isBusy    = false
-
-local function getMerchant()
-
-    local d = ReplicatedStorage:FindFirstChild("Dialogue")
-
-    return d and d:FindFirstChild("Merchant")
-
-end
-
-local function getEventNPC()
-
-    local d = ReplicatedStorage:FindFirstChild("Dialogue")
-
-    return d and d:FindFirstChild("Halloween Event")
-
-end
-
 local function getDialogueGui()
     local pg = player:FindFirstChild("PlayerGui")
     if not pg then return nil end
@@ -827,366 +255,194 @@ local function isGuiElementVisible(elem)
 end
 
 local function isItemSold(item)
-
     if not item or not item.Parent or not item:IsDescendantOf(game) then return true end
-
     local char    = player.Character
-
     local backpack = player:FindFirstChild("Backpack")
-
     if (backpack and item:IsDescendantOf(backpack)) or (char and item:IsDescendantOf(char)) then
-
         return false
-
     end
-
     return true
-
 end
 
-local function autoClickDialogueButtons()
-
-    local gui = getDialogueGui()
-
-    if not gui then return end
-
-    for _, btn in ipairs(gui:GetDescendants()) do
-
-        if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and isGuiElementVisible(btn) then
-
-            local txt = btn.Text or ""
-
-            local childText = btn:FindFirstChildOfClass("TextLabel")
-
-            if childText and childText.Text ~= "" then txt = childText.Text end
-
-            local lower = txt:lower()
-
-            if lower:find("sell this") or lower:find("i'd like to sell") or lower:find("deal") or lower:find("all") then
-
-                pcall(function()
-
-                    if firesignal then firesignal(btn.MouseButton1Click) firesignal(btn.Activated)
-
-                    else btn.Activated:Fire() end
-
-                end)
-
-            end
-
-        end
-
-    end
-
-end
-
-local function closeMerchantDialogue()
-
-    local char   = player.Character
-
-    local remote = char and char:FindFirstChild("RemoteEvent")
-
-    pcall(function()
-
-        if remote then
-
-            remote:FireServer("EndDialogue", { Option = "Option1", Dialogue = "Dialogue3", NPC = "Merchant" })
-
-            remote:FireServer("DialogueEnd", { Option = "Option1", Dialogue = "Dialogue3", NPC = "Merchant" })
-
-            remote:FireServer("EndDialogue", { Option = "Option2", Dialogue = "Dialogue1", NPC = "Merchant" })
-
-        end
-
-    end)
-
-    local gui = getDialogueGui()
-
-    if gui then
-
-        pcall(function()
-
-            for _, btn in ipairs(gui:GetDescendants()) do
-
-                if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and isGuiElementVisible(btn) then
-
-                    local txt = btn.Text or ""
-
-                    local childText = btn:FindFirstChildOfClass("TextLabel")
-
-                    if childText and childText.Text ~= "" then txt = childText.Text end
-
-                    local lower = txt:lower()
-
-                    if lower:find("nevermind") or lower:find("nothing") or lower:find("bye") or lower:find("leave") or lower:find("no") or lower:find("exit") or lower:find("close") or lower:find("goodbye") then
-
-                        if firesignal then firesignal(btn.MouseButton1Click) firesignal(btn.Activated)
-
-                        else btn.Activated:Fire() end
-
-                    end
-
-                end
-
-            end
-
-        end)
-
-        task.wait(0.12)
-
-        if gui:IsA("ScreenGui") and gui.Enabled then pcall(function() gui.Enabled = false end) end
-
-    end
-
-end
-
-local function sellSingleItem(item)
-
-    if not item or isItemSold(item) or DontSell[item.Name] then return true, "AlreadySold" end
-
-    local char, _, hum = getCharacter()
-
-    local remote   = char and char:FindFirstChild("RemoteEvent")
-
-    local merchant = getMerchant()
-
-    if not hum or not remote or not merchant then return false, "MissingCharacterOrNPC" end
-
-    hum:EquipTool(item)
-
-    local equipTimeout = tick() + 0.8
-
-    while tick() < equipTimeout and item.Parent ~= char do task.wait(0.04) end
-
-    if item.Parent ~= char then return false, "EquipTimeout" end
-
-    task.wait(0.12)
-
-    remote:FireServer("PromptTriggered", merchant)
-
-    task.wait(0.12)
-
-    autoClickDialogueButtons()
-
-    remote:FireServer("DialogueType", { Option = "Option1", Dialogue = "Dialogue1", NPC = "Merchant" })
-
-    task.wait(0.12)
-
-    autoClickDialogueButtons()
-
-    remote:FireServer("DialogueType", { Option = "Option1", Dialogue = "Dialogue5", NPC = "Merchant" })
-
-    task.wait(0.12)
-
-    autoClickDialogueButtons()
-
-    local sellTimeout = tick() + 1.2
-
-    while tick() < sellTimeout do
-
-        if isItemSold(item) then break end
-
-        autoClickDialogueButtons()
-
-        task.wait(0.08)
-
-    end
-
-    pcall(function()
-
-        remote:FireServer("EndDialogue", { Option = "Option1", Dialogue = "Dialogue5", NPC = "Merchant" })
-
-        remote:FireServer("DialogueType", { Option = "Option1", Dialogue = "Dialogue3", NPC = "Merchant" })
-
-        remote:FireServer("EndDialogue", { Option = "Option1", Dialogue = "Dialogue3", NPC = "Merchant" })
-
-        remote:FireServer("DialogueEnd",  { Option = "Option1", Dialogue = "Dialogue3", NPC = "Merchant" })
-
-    end)
-
-    task.wait(0.1)
-
-    return isItemSold(item), isItemSold(item) and "Success" or "ItemStillExists"
-
-end
-
-local function sellSingleItemWithRetries(item, maxRetries)
-
-    maxRetries = maxRetries or 3
-
-    local lastError = "Unknown"
-
-    for attempt = 1, maxRetries do
-
-        if isItemSold(item) then return true, "Success" end
-
-        local ok, errStage = sellSingleItem(item)
-
-        if ok then return true, "Success" end
-
-        lastError = errStage
-
-        task.wait(0.2)
-
-    end
-
-    return false, lastError
-
-end
+-- =======================================================
+-- МОДУЛЬ АВТОПРОДАЖУ ТА ОБРОБКИ ІНВЕНТАРЮ
+-- =======================================================
+local sellQueue  = {}
+local isBusy     = false
 
 local function isItemInQueue(item)
-
-    for _, q in ipairs(sellQueue) do if q == item then return true end end
-
+    for _, queuedItem in ipairs(sellQueue) do
+        if queuedItem == item then return true end
+    end
     return false
-
 end
 
 local function queueItemForSale(item)
-
-    if not item or not item:IsA("Tool") or DontSell[item.Name] then return end
-
-    if isItemSold(item) or isItemInQueue(item) then return end
-
+    if not _G.AutoSell or not item or not item:IsA("Tool") then return end
+    if item.Name == "Lucky Arrow" then return end
+    if isItemInQueue(item) then return end
     table.insert(sellQueue, item)
-
 end
 
 local function syncSellQueue()
-
     local backpack = player:FindFirstChild("Backpack")
-
     if backpack then
-
-        for _, item in ipairs(backpack:GetChildren()) do queueItemForSale(item) end
-
-    end
-
-    local char = player.Character
-
-    if char then
-
-        for _, item in ipairs(char:GetChildren()) do
-
-            if item:IsA("Tool") and not DontSell[item.Name] then queueItemForSale(item) end
-
+        for _, item in ipairs(backpack:GetChildren()) do
+            queueItemForSale(item)
         end
-
     end
-
+    local char = player.Character
+    if char then
+        for _, item in ipairs(char:GetChildren()) do
+            queueItemForSale(item)
+        end
+    end
 end
 
 local function hasSellableItems()
-
     local backpack = player:FindFirstChild("Backpack")
-
     if backpack then
-
         for _, item in ipairs(backpack:GetChildren()) do
-
-            if item:IsA("Tool") and not DontSell[item.Name] then return true end
-
+            if item:IsA("Tool") and item.Name ~= "Lucky Arrow" then return true end
         end
-
     end
-
     local char = player.Character
-
     if char then
-
         for _, item in ipairs(char:GetChildren()) do
-
-            if item:IsA("Tool") and not DontSell[item.Name] then return true end
-
+            if item:IsA("Tool") and item.Name ~= "Lucky Arrow" then return true end
         end
-
     end
-
     return false
-
 end
 
-local function setupBackpackListener(backpack)
+local function autoClickDialogueButtons()
+    local gui = getDialogueGui()
+    if not gui then return false end
+    local clicked = false
+    for _, btn in ipairs(gui:GetDescendants()) do
+        if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and isGuiElementVisible(btn) then
+            local txt = btn.Text or ""
+            local childText = btn:FindFirstChildOfClass("TextLabel")
+            if childText and childText.Text ~= "" then txt = childText.Text end
+            local lowerTxt = txt:lower()
+            if lowerTxt:find("sell") or lowerTxt:find("yes") or lowerTxt:find("deal") or lowerTxt:find("sure") or lowerTxt:find("anything else") then
+                pcall(function()
+                    if firesignal then
+                        firesignal(btn.MouseButton1Click)
+                        firesignal(btn.Activated)
+                    else
+                        btn.Activated:Fire()
+                    end
+                end)
+                clicked = true
+            end
+        end
+    end
+    return clicked
+end
 
-    for _, item in ipairs(backpack:GetChildren()) do queueItemForSale(item) end
+local function closeMerchantDialogue()
+    local char = player.Character
+    local remote = char and char:FindFirstChild("RemoteEvent")
+    if remote then
+        remote:FireServer("EndDialogue", { Option = "Option2", Dialogue = "Dialogue1", NPC = "Merchant" })
+        remote:FireServer("EndDialogue", { Option = "Option1", Dialogue = "Dialogue3", NPC = "Merchant" })
+    end
+    local gui = getDialogueGui()
+    if gui then
+        for _, btn in ipairs(gui:GetDescendants()) do
+            if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and isGuiElementVisible(btn) then
+                local txt = (btn.Text or ""):lower()
+                local childText = btn:FindFirstChildOfClass("TextLabel")
+                if childText then txt = (childText.Text or ""):lower() end
+                if txt:find("bye") or txt:find("no") or txt:find("leave") or txt:find("close") or txt:find("see ya") then
+                    pcall(function()
+                        if firesignal then firesignal(btn.MouseButton1Click) firesignal(btn.Activated)
+                        else btn.Activated:Fire() end
+                    end)
+                end
+            end
+        end
+    end
+end
 
-    backpack.ChildAdded:Connect(function(item)
-
-        task.wait(0.2)
-
-        if _G.AutoSell then queueItemForSale(item) end
-
+local function initBackpackTracking()
+    local function hookBackpack(bp)
+        if not bp then return end
+        bp.ChildAdded:Connect(function(child)
+            if child:IsA("Tool") and _G.AutoSell then
+                task.wait(0.1)
+                queueItemForSale(child)
+            end
+        end)
+    end
+    local bp = player:FindFirstChild("Backpack")
+    if bp then hookBackpack(bp) end
+    player.ChildAdded:Connect(function(child)
+        if child.Name == "Backpack" and child:IsA("Backpack") then
+            hookBackpack(child)
+        end
     end)
-
+    player.CharacterAdded:Connect(function(char)
+        char.ChildAdded:Connect(function(child)
+            if child:IsA("Tool") and _G.AutoSell then
+                queueItemForSale(child)
+            end
+        end)
+    end)
 end
+initBackpackTracking()
 
-player.ChildAdded:Connect(function(child)
-
-    if child.Name == "Backpack" then setupBackpackListener(child) end
-
-end)
-
-if player:FindFirstChild("Backpack") then setupBackpackListener(player.Backpack) end
+-- =======================================================
+-- МОДУЛЬ HALLOWEEN EVENT (NPC JACK)
+-- =======================================================
+local function getEventNPC()
+    local npcs = workspace:FindFirstChild("NPCs") or workspace:FindFirstChild("NPC") or workspace
+    for _, desc in ipairs(npcs:GetDescendants()) do
+        if desc:IsA("Model") and (desc.Name:find("Jack") or desc.Name:find("Cauldron") or desc.Name:find("Specter")) then
+            return desc
+        end
+    end
+    return nil
+end
 
 local function countTotalCandies()
-
-    local backpack = player:FindFirstChild("Backpack")
-
-    if not backpack then return 0 end
-
     local count = 0
-
-    for _, item in ipairs(backpack:GetChildren()) do
-
-        if item:IsA("Tool") and EventCandies[item.Name] then count += 1 end
-
+    local backpack = player:FindFirstChild("Backpack")
+    local char = player.Character
+    local function checkContainer(cont)
+        if not cont then return end
+        for _, item in ipairs(cont:GetChildren()) do
+            if item:IsA("Tool") and (item.Name:lower():find("candy") or item.Name:lower():find("candies")) then
+                count = count + 1
+            end
+        end
     end
-
+    checkContainer(backpack)
+    checkContainer(char)
     return count
-
 end
 
 local function clickEventCandyOption()
-
     local gui = getDialogueGui()
-
     if not gui then return false end
-
     for _, btn in ipairs(gui:GetDescendants()) do
-
         if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and isGuiElementVisible(btn) then
-
             local txt = btn.Text or ""
-
             local childText = btn:FindFirstChildOfClass("TextLabel")
-
             if childText and childText.Text ~= "" then txt = childText.Text end
-
             local lowerTxt = txt:lower()
-
             if lowerTxt:find("turn in") or (lowerTxt:find("candy") and not lowerTxt:find("what do i do") and not lowerTxt:find("could you please")) then
-
                 pcall(function()
-
                     if firesignal then firesignal(btn.MouseButton1Click) firesignal(btn.Activated)
-
                     else btn.Activated:Fire() end
-
                 end)
-
                 return true
-
             end
-
         end
-
     end
-
     return false
-
 end
-
--- Надійне визначення активного діалогового вікна Jack із перевіркою видимості
 
 local function findJackDialogue()
     local gui = getDialogueGui()
@@ -1228,7 +484,6 @@ local function findJackDialogue()
             end
         end
 
-        -- Визначення фактичної рамки діалогу (ігноруючи повноекранні фонові шари)
         if desc:IsA("Frame") and isGuiElementVisible(desc) then
             local size = desc.AbsoluteSize
             if size.X >= 180 and size.X <= vpSize.X * 0.92 and size.Y >= 50 and size.Y <= vpSize.Y * 0.65 then
@@ -1259,21 +514,19 @@ local function findJackDialogue()
             continueElem = continueElem,
             pointsElem   = pointsElem,
             dialogueBox  = dialogueBox,
-            continueBtn  = continueBtn, -- тільки якщо елемент або його батько є GuiButton! Жодних випадкових кнопок.
+            continueBtn  = continueBtn,
         }
     end
 
     return nil
 end
 
--- Автоматичне закриття діалогу через штатну взаємодію з інтерфейсом
 local function clickContinueButton(jackData)
     if not jackData then
         warn("[UA Killer Hub | Event] clickContinueButton: jackData відсутній (nil).")
         return false
     end
 
-    -- Детальна діагностика стану GUI-елементів
     print("[UA Killer Hub | Event] Діагностика елементів діалогу перед кліком:")
     if jackData.pointsElem then
         print(string.format("  • [PointsElem] Class: %s | Text: '%s' | Pos: (%d, %d) | Size: (%d, %d)",
@@ -1309,7 +562,6 @@ local function clickContinueButton(jackData)
 
     local clicked = false
 
-    -- 1. Якщо знайдено підтверджену кнопку продовження — викликаємо сигнали
     if jackData.continueBtn then
         local ok, err = pcall(function()
             if firesignal then
@@ -1327,7 +579,6 @@ local function clickContinueButton(jackData)
         end
     end
 
-    -- 2. Клік мишкою через VirtualInputManager по центру тексту ContinueElem
     if VirtualInputManager and jackData.continueElem and jackData.continueElem:IsA("GuiObject") and isGuiElementVisible(jackData.continueElem) then
         local absPos = jackData.continueElem.AbsolutePosition
         local absSize = jackData.continueElem.AbsoluteSize
@@ -1347,7 +598,6 @@ local function clickContinueButton(jackData)
         end
     end
 
-    -- 3. Клік мишкою по центру DialogueBox (стандартна область кліку в діалогах)
     if VirtualInputManager and jackData.dialogueBox and jackData.dialogueBox:IsA("GuiObject") and isGuiElementVisible(jackData.dialogueBox) then
         local absPos = jackData.dialogueBox.AbsolutePosition
         local absSize = jackData.dialogueBox.AbsoluteSize
@@ -1380,7 +630,6 @@ local function submitAllCandies()
         return false
     end
 
-    -- Ховаємо інструменти в Backpack, щоб кнопка DROP не перекривала екран і не перехоплювала кліки
     pcall(function()
         hum:UnequipTools()
     end)
@@ -1412,7 +661,6 @@ local function submitAllCandies()
         local jackData      = nil
         local waitTimeout   = tick() + 5.0
 
-        -- Очікуємо повної появи тексту очок ТА напису CLICK TO CONTINUE (завершення друку)
         while tick() < waitTimeout and _G.AutoEventCandy do
             jackData = findJackDialogue()
             if jackData then
@@ -1433,10 +681,8 @@ local function submitAllCandies()
             return
         end
 
-        -- Затримка для завершення будь-яких залишкових анімацій інтерфейсу
         task.wait(0.25)
 
-        -- Спроба закриття з динамічним оновленням стану та перевіркою фактичного зникнення
         local isClosed = false
         for attempt = 1, 3 do
             local currentData = findJackDialogue()
@@ -1476,1882 +722,1359 @@ local function submitAllCandies()
 end
 
 -- Головний потік продажів та цукерок
-
 task.spawn(function()
-
     while true do
-
         task.wait(0.3)
-
         if isBusy then continue end
 
         if _G.AutoEventCandy and countTotalCandies() >= 10 then
-
             isBusy = true
-
             closeMerchantDialogue()
-
             while countTotalCandies() > 0 and _G.AutoEventCandy do
-
                 submitAllCandies()
-
                 task.wait(0.5)
-
             end
-
             isBusy = false
-
             continue
-
         end
 
         if _G.AutoSell and (#sellQueue > 0 or hasSellableItems()) then
-
             isBusy = true
-
             syncSellQueue()
 
-            while _G.AutoSell and #sellQueue > 0 do
+            while #sellQueue > 0 and _G.AutoSell do
+                local currentItem = table.remove(sellQueue, 1)
 
-                local item = table.remove(sellQueue, 1)
+                if currentItem and currentItem.Parent and currentItem:IsA("Tool") and currentItem.Name ~= "Lucky Arrow" then
+                    local char, _, hum = getCharacter()
+                    local remote = char and char:FindFirstChild("RemoteEvent")
 
-                if item and not isItemSold(item) and not DontSell[item.Name] then
+                    if hum and remote then
+                        local sellSuccess = false
+                        local attempts = 0
 
-                    sellSingleItemWithRetries(item, 3)
+                        while attempts < 3 and not sellSuccess and _G.AutoSell do
+                            attempts = attempts + 1
 
-                    task.wait(0.15)
+                            if currentItem.Parent == player:FindFirstChild("Backpack") then
+                                hum:EquipTool(currentItem)
+                                task.wait(0.15)
+                            end
 
+                            remote:FireServer("EndDialogue", { Option = "Option1", Dialogue = "Dialogue2", NPC = "Merchant" })
+                            task.wait(0.2)
+                            autoClickDialogueButtons()
+                            task.wait(0.2)
+                            remote:FireServer("EndDialogue", { Option = "Option1", Dialogue = "Dialogue5", NPC = "Merchant" })
+                            task.wait(0.2)
+                            autoClickDialogueButtons()
+
+                            local checkStart = tick()
+                            while tick() - checkStart < 1.0 do
+                                task.wait(0.1)
+                                if isItemSold(currentItem) then
+                                    sellSuccess = true
+                                    break
+                                end
+                            end
+
+                            if not sellSuccess then
+                                task.wait(0.3)
+                            end
+                        end
+
+                        if not sellSuccess then
+                            warn("[UA Killer Hub | AutoSell] Не вдалося підтвердити продаж предмета: " .. currentItem.Name)
+                        else
+                            print("[UA Killer Hub | AutoSell] Успішно продано предмет: " .. currentItem.Name)
+                        end
+                    end
                 end
 
+                task.wait(0.2)
             end
 
             closeMerchantDialogue()
-
             isBusy = false
-
+            continue
         end
+    end
+end)
 
+-- =======================================================
+-- МОДУЛЬ АВТОФАРМУ (ITEM FARM) ТА ESP
+-- =======================================================
+local function flyTo(targetCFrame, speed, onStep)
+    local char, root, hum = getCharacter()
+    if not root or not hum then return false end
+
+    cleanupFlight()
+    ensureNoClip()
+
+    local startPos = root.Position
+    local targetPos = targetCFrame.Position
+    local totalDist = (targetPos - startPos).Magnitude
+
+    if totalDist < 5 then
+        root.CFrame = targetCFrame
+        return true
     end
 
-end)
+    local actualSpeed = math.clamp(speed or _G.FarmSpeed or 60, 10, 150)
+    local duration = totalDist / actualSpeed
 
-local function applyJumpPower()
+    local bodyPos = Instance.new("BodyPosition")
+    bodyPos.MaxForce = Vector3.new(1e6, 1e6, 1e6)
+    bodyPos.P = 15000
+    bodyPos.D = 1200
+    bodyPos.Position = startPos
+    bodyPos.Parent = root
 
-    local _, _, hum = getCharacter()
+    local bodyGyro = Instance.new("BodyGyro")
+    bodyGyro.MaxTorque = Vector3.new(1e6, 1e6, 1e6)
+    bodyGyro.P = 15000
+    bodyGyro.D = 500
+    bodyGyro.CFrame = targetCFrame
+    bodyGyro.Parent = root
 
-    if hum then hum.JumpPower = JP_Value end
+    hum.PlatformStand = true
 
-end
+    flightState = {
+        bodyPos = bodyPos,
+        bodyGyro = bodyGyro,
+        targetCFrame = targetCFrame,
+        heartbeatConn = nil,
+    }
 
-player.CharacterAdded:Connect(function(newChar)
+    local startTime = tick()
+    local reached = false
 
-    task.wait(0.5)
-
-    applyJumpPower()
-
-    newChar.ChildAdded:Connect(function(item)
-
-        task.wait(0.2)
-
-        if _G.AutoSell and item:IsA("Tool") and not DontSell[item.Name] then
-
-            queueItemForSale(item)
-
+    local conn
+    conn = RunService.Heartbeat:Connect(function()
+        if not _G.ItemFarm or not flightState then
+            if conn then conn:Disconnect() end
+            return
         end
 
-    end)
+        local elapsed = tick() - startTime
+        local alpha = math.clamp(elapsed / duration, 0, 1)
 
-end)
+        local currentTargetPos = startPos:Lerp(targetPos, alpha)
+        bodyPos.Position = currentTargetPos
+        bodyGyro.CFrame = targetCFrame
 
-if player.Character then
-
-    player.Character.ChildAdded:Connect(function(item)
-
-        task.wait(0.2)
-
-        if _G.AutoSell and item:IsA("Tool") and not DontSell[item.Name] then
-
-            queueItemForSale(item)
-
+        if onStep then
+            pcall(onStep, currentTargetPos, alpha)
         end
 
+        if alpha >= 1 or (root.Position - targetPos).Magnitude < 4 then
+            reached = true
+            if conn then conn:Disconnect() end
+        end
     end)
 
+    flightState.heartbeatConn = conn
+
+    local waitTimeout = tick() + duration + 1.5
+    while not reached and tick() < waitTimeout and _G.ItemFarm and flightState do
+        task.wait(0.05)
+    end
+
+    cleanupFlight()
+
+    if reached and root then
+        root.CFrame = targetCFrame
+    end
+
+    return reached
 end
 
-task.spawn(function()
+local function cleanBannedCoordinates()
+    local now = tick()
+    for key, timestamp in pairs(bannedCoordinates) do
+        if now - timestamp > BAN_TTL then
+            bannedCoordinates[key] = nil
+        end
+    end
+end
 
-    while task.wait(0.2) do applyJumpPower() end
+local function isCoordBanned(pos)
+    cleanBannedCoordinates()
+    local key = string.format("%d_%d_%d", math.floor(pos.X / 4), math.floor(pos.Y / 4), math.floor(pos.Z / 4))
+    return bannedCoordinates[key] ~= nil
+end
 
-end)
+local function banCoordinate(pos)
+    local key = string.format("%d_%d_%d", math.floor(pos.X / 4), math.floor(pos.Y / 4), math.floor(pos.Z / 4))
+    bannedCoordinates[key] = tick()
+end
+
+local function isItemSpawnDescendant(inst)
+    local current = inst
+    while current and current ~= workspace do
+        if current.Name == "ItemSpawn" then return true end
+        current = current.Parent
+    end
+    return false
+end
+
+local function refreshItemCache()
+    local now = tick()
+    if now - lastCacheRefresh < CACHE_REFRESH_INTERVAL and #itemCache > 0 then
+        local filtered = {}
+        for _, item in ipairs(itemCache) do
+            if item and item.Parent and item:IsDescendantOf(workspace) then
+                table.insert(filtered, item)
+            end
+        end
+        itemCache = filtered
+        return itemCache
+    end
+
+    local scanStart = tick()
+    local found = {}
+
+    local function scanContainer(cont)
+        if not cont then return end
+        for _, obj in ipairs(cont:GetChildren()) do
+            if obj:IsA("Tool") or (obj:IsA("Model") and obj:FindFirstChildOfClass("TouchTransmitter", true)) then
+                table.insert(found, obj)
+            elseif obj.Name == "ItemSpawn" then
+                for _, child in ipairs(obj:GetChildren()) do
+                    if child:IsA("Tool") or child:IsA("BasePart") or child:IsA("Model") then
+                        table.insert(found, child)
+                    end
+                end
+            end
+        end
+    end
+
+    scanContainer(workspace)
+    local mapFolder = workspace:FindFirstChild("Map") or workspace:FindFirstChild("ItemSpawns")
+    if mapFolder then scanContainer(mapFolder) end
+
+    itemCache = found
+    lastCacheRefresh = tick()
+    return itemCache
+end
+
+local function findTargetItems()
+    local candidates = {}
+    local _, root = getCharacter()
+    if not root then return candidates end
+
+    local myPos = root.Position
+    local items = refreshItemCache()
+
+    for _, obj in ipairs(items) do
+        if obj and obj.Parent and obj:IsDescendantOf(workspace) then
+            local isSelected = _G.SelectedItems[obj.Name] == true
+
+            if isSelected then
+                local part = obj:IsA("BasePart") and obj or obj:FindFirstChildWhichIsA("BasePart", true)
+                if part and not isCoordBanned(part.Position) then
+                    local dist = (part.Position - myPos).Magnitude
+                    if dist <= (_G.ItemDistance or 5000) then
+                        table.insert(candidates, {
+                            instance = obj,
+                            part = part,
+                            distance = dist,
+                            name = obj.Name,
+                        })
+                    end
+                end
+            end
+        end
+    end
+
+    table.sort(candidates, function(a, b) return a.distance < b.distance end)
+    return candidates
+end
+
+local function pickupItem(itemObj, part)
+    if not itemObj or not itemObj.Parent then return false end
+
+    local char, root = getCharacter()
+    if not root then return false end
+
+    local prompt = itemObj:FindFirstChildOfClass("ProximityPrompt", true)
+    local touch  = part:FindFirstChildOfClass("TouchTransmitter") or itemObj:FindFirstChildOfClass("TouchTransmitter", true)
+
+    local targetPos = part.Position
+    local targetCFrame = CFrame.new(targetPos)
+
+    local reached = flyTo(targetCFrame, _G.FarmSpeed, function(curPos)
+        if touch and root then
+            firetouchinterest(root, part, 0)
+            task.wait()
+            firetouchinterest(root, part, 1)
+        end
+    end)
+
+    if not reached then return false end
+
+    local function checkPickedUp()
+        if not itemObj or not itemObj.Parent or not itemObj:IsDescendantOf(workspace) then
+            return true
+        end
+        return false
+    end
+
+    if prompt and prompt.Parent then
+        local fired = false
+        pcall(function()
+            if fireproximityprompt then
+                fireproximityprompt(prompt)
+                fired = true
+            end
+        end)
+        if not fired then
+            pcall(function()
+                prompt:InputHoldBegin()
+                task.wait(prompt.HoldDuration + 0.05)
+                prompt:InputHoldEnd()
+            end)
+        end
+    end
+
+    if touch and root then
+        firetouchinterest(root, part, 0)
+        task.wait(0.05)
+        firetouchinterest(root, part, 1)
+    end
+
+    local waitConfirm = tick() + 0.6
+    while tick() < waitConfirm do
+        if checkPickedUp() then return true end
+        task.wait(0.05)
+    end
+
+    return checkPickedUp()
+end
+
+local function runItemFarmLoop(sessionId)
+    task.spawn(function()
+        while _G.ItemFarm and sessionId == farmSessionId do
+            task.wait(0.1)
+
+            if isBusy then
+                setFarmStatus("Очікування завершення продажів...")
+                task.wait(0.5)
+                continue
+            end
+
+            local targets = findTargetItems()
+
+            if #targets == 0 then
+                setFarmStatus("Пошук предметів на карті...")
+                task.wait(0.8)
+                continue
+            end
+
+            for _, target in ipairs(targets) do
+                if not _G.ItemFarm or sessionId ~= farmSessionId or isBusy then break end
+
+                local obj = target.instance
+                local part = target.part
+
+                if not obj or not obj.Parent or not part or not part.Parent then continue end
+                if isCoordBanned(part.Position) then continue end
+
+                setFarmStatus(string.format("Збір: %s (%.0f м)", target.name, target.distance))
+
+                local attempts = failedItemAttempts[obj] or 0
+                local success = pickupItem(obj, part)
+
+                if success then
+                    failedItemAttempts[obj] = nil
+                    setFarmStatus("Предмет підібрано успішно!")
+                    task.wait(0.1)
+                    break
+                else
+                    attempts = attempts + 1
+                    failedItemAttempts[obj] = attempts
+
+                    if attempts >= 2 then
+                        banCoordinate(part.Position)
+                        failedItemAttempts[obj] = nil
+                        setFarmStatus(string.format("Предмет %s пропущено (чорний список)", target.name))
+                    else
+                        setFarmStatus(string.format("Помилка підбору %s, повторна спроба...", target.name))
+                    end
+                end
+            end
+        end
+
+        cleanupFlight()
+        setFarmStatus("Фарм зупинено.")
+        farmThreadActive = false
+    end)
+end
+
+-- =======================================================
+-- СИСТЕМА ПІДТРИМКИ ESP
+-- =======================================================
+local function clearESP()
+    for obj, esp in pairs(espObjects) do
+        pcall(function()
+            if esp.box then esp.box:Destroy() end
+            if esp.billboard then esp.billboard:Destroy() end
+        end)
+    end
+    table.clear(espObjects)
+end
 
 task.spawn(function()
     while true do
-        task.wait(0.8)
+        task.wait(1.0)
         if _G.ItemESP then
-            for part, gui in pairs(espObjects) do
-                if not part or not part.Parent or not part:IsDescendantOf(workspace) then
-                    if gui then pcall(function() gui:Destroy() end) end
-                    espObjects[part] = nil
+            local items = refreshItemCache()
+            local activeSet = {}
+
+            for _, obj in ipairs(items) do
+                if obj and obj.Parent and obj:IsDescendantOf(workspace) then
+                    activeSet[obj] = true
+                    if not espObjects[obj] then
+                        local part = obj:IsA("BasePart") and obj or obj:FindFirstChildWhichIsA("BasePart", true)
+                        if part then
+                            local highlight = Instance.new("Highlight")
+                            highlight.Adornee = obj
+                            highlight.FillColor = Color3.fromRGB(139, 124, 246)
+                            highlight.FillTransparency = 0.5
+                            highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+                            highlight.OutlineTransparency = 0
+                            highlight.Parent = part
+
+                            local billboard = Instance.new("BillboardGui")
+                            billboard.Adornee = part
+                            billboard.Size = UDim2.new(0, 100, 0, 30)
+                            billboard.StudsOffset = Vector3.new(0, 2, 0)
+                            billboard.AlwaysOnTop = true
+
+                            local label = Instance.new("TextLabel")
+                            label.Size = UDim2.new(1, 0, 1, 0)
+                            label.BackgroundTransparency = 1
+                            label.Text = obj.Name
+                            label.TextColor3 = Color3.fromRGB(255, 255, 255)
+                            label.TextStrokeTransparency = 0
+                            label.Font = Enum.Font.GothamBold
+                            label.TextSize = 12
+                            label.Parent = billboard
+
+                            billboard.Parent = part
+
+                            espObjects[obj] = { box = highlight, billboard = billboard }
+                        end
+                    end
                 end
             end
-            for _, item in ipairs(refreshItemCache()) do applyESP(item.part, item.name) end
+
+            for obj, esp in pairs(espObjects) do
+                if not activeSet[obj] or not obj.Parent then
+                    pcall(function()
+                        if esp.box then esp.box:Destroy() end
+                        if esp.billboard then esp.billboard:Destroy() end
+                    end)
+                    espObjects[obj] = nil
+                end
+            end
         else
-            clearESP()
+            if next(espObjects) then
+                clearESP()
+            end
         end
     end
 end)
 
 -- =======================================================
-
--- БЕЗПЕЧНЕ СТВОРЕННЯ MONHUB GUI
-
+-- СИСТЕМА КОНФІГУРАЦІЙ ТА ПОЕТАПНОГО ЗАВАНТАЖЕННЯ
 -- =======================================================
-
-print("[UA Killer Hub | GUI] Початок створення графічного інтерфейсу...")
-
-local function getSafeGuiParent()
-
-    if gethui then
-
-        local ok, h = pcall(gethui)
-
-        if ok and h then return h end
-
-    end
-
-    local okCore, core = pcall(function() return game:GetService("CoreGui") end)
-
-    if okCore and core then
-
-        local testOk = pcall(function()
-
-            local f = Instance.new("Folder", core)
-
-            f:Destroy()
-
-        end)
-
-        if testOk then return core end
-
-    end
-
-    return player:WaitForChild("PlayerGui", 5) or player:FindFirstChildOfClass("PlayerGui")
-
-end
-
-local targetGuiParent = getSafeGuiParent()
-
-print("[UA Killer Hub | GUI] Контейнер GUI: " .. tostring(targetGuiParent and targetGuiParent.Name))
-
-pcall(function()
-
-    if targetGuiParent then
-
-        local old = targetGuiParent:FindFirstChild("UAKillerHub_GUI")
-
-        if old then old:Destroy() end
-
-    end
-
-    local pg = player:FindFirstChild("PlayerGui")
-
-    if pg then
-
-        local oldPg = pg:FindFirstChild("UAKillerHub_GUI")
-
-        if oldPg then oldPg:Destroy() end
-
-    end
-
-end)
-
-local ScreenGui = Instance.new("ScreenGui")
-
-ScreenGui.Name           = "UAKillerHub_GUI"
-
-ScreenGui.ResetOnSpawn   = false
-
-ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-
-ScreenGui.Parent         = targetGuiParent
-
-local MainFrame = Instance.new("Frame")
-
-MainFrame.Name             = "MainFrame"
-
-MainFrame.Size             = UDim2.new(0, 520, 0.5, -300)
-
-MainFrame.Position         = UDim2.new(0.5, -260, 0, 100)
-
-MainFrame.BackgroundColor3 = Color3.fromRGB(23, 25, 31)
-
-MainFrame.BorderSizePixel  = 0
-
-MainFrame.ClipsDescendants = true
-
-MainFrame.Parent           = ScreenGui
-
-local MainCorner = Instance.new("UICorner")
-
-MainCorner.CornerRadius = UDim.new(0, 10)
-
-MainCorner.Parent       = MainFrame
-
-local MainStroke = Instance.new("UIStroke")
-
-MainStroke.Color     = Color3.fromRGB(38, 42, 53)
-
-MainStroke.Thickness = 1
-
-MainStroke.Parent    = MainFrame
-
--- Контейнер сповіщень
-
-local ToastContainer = Instance.new("Frame")
-
-ToastContainer.Name                  = "ToastContainer"
-
-ToastContainer.Size                  = UDim2.new(0, 240, 1, -20)
-
-ToastContainer.Position              = UDim2.new(1, -250, 0, 10)
-
-ToastContainer.BackgroundTransparency = 1
-
-ToastContainer.Parent                = ScreenGui
-
-local ToastList = Instance.new("UIListLayout")
-
-ToastList.Padding             = UDim.new(0, 6)
-
-ToastList.SortOrder           = Enum.SortOrder.LayoutOrder
-
-ToastList.VerticalAlignment   = Enum.VerticalAlignment.Bottom
-
-ToastList.HorizontalAlignment = Enum.HorizontalAlignment.Center
-
-ToastList.Parent              = ToastContainer
-
-local function showNotification(title, message, duration)
-
-    duration = duration or 3
-
-    local toast = Instance.new("Frame")
-
-    toast.Size             = UDim2.new(1, 0, 0, 0)
-
-    toast.BackgroundColor3 = Color3.fromRGB(27, 30, 38)
-
-    toast.BorderSizePixel  = 0
-
-    toast.ClipsDescendants = true
-
-    toast.Parent           = ToastContainer
-
-    Instance.new("UICorner", toast).CornerRadius = UDim.new(0, 8)
-
-    local stroke = Instance.new("UIStroke", toast)
-
-    stroke.Color       = Color3.fromRGB(139, 124, 246)
-
-    stroke.Thickness   = 1
-
-    stroke.Transparency = 1
-
-    local titleLbl = Instance.new("TextLabel", toast)
-
-    titleLbl.Size                  = UDim2.new(1, -16, 0, 20)
-
-    titleLbl.Position              = UDim2.new(0, 10, 0, 6)
-
-    titleLbl.BackgroundTransparency = 1
-
-    titleLbl.Text                  = title
-
-    titleLbl.TextColor3            = Color3.fromRGB(139, 124, 246)
-
-    titleLbl.Font                  = Enum.Font.GothamBold
-
-    titleLbl.TextSize              = 13
-
-    titleLbl.TextXAlignment        = Enum.TextXAlignment.Left
-
-    titleLbl.TextTransparency      = 1
-
-    local msgLbl = Instance.new("TextLabel", toast)
-
-    msgLbl.Size                  = UDim2.new(1, -16, 0, 22)
-
-    msgLbl.Position              = UDim2.new(0, 10, 0, 26)
-
-    msgLbl.BackgroundTransparency = 1
-
-    msgLbl.Text                  = message
-
-    msgLbl.TextColor3            = Color3.fromRGB(200, 205, 215)
-
-    msgLbl.Font                  = Enum.Font.Gotham
-
-    msgLbl.TextSize              = 11
-
-    msgLbl.TextXAlignment        = Enum.TextXAlignment.Left
-
-    msgLbl.TextTransparency      = 1
-
-    TweenService:Create(toast,    TweenInfo.new(0.2), { Size = UDim2.new(1, 0, 0, 55) }):Play()
-
-    TweenService:Create(stroke,   TweenInfo.new(0.2), { Transparency = 0 }):Play()
-
-    TweenService:Create(titleLbl, TweenInfo.new(0.2), { TextTransparency = 0 }):Play()
-
-    TweenService:Create(msgLbl,   TweenInfo.new(0.2), { TextTransparency = 0 }):Play()
-
-    task.delay(duration, function()
-
-        pcall(function()
-
-            TweenService:Create(toast,    TweenInfo.new(0.2), { Size = UDim2.new(1, 0, 0, 0) }):Play()
-
-            TweenService:Create(stroke,   TweenInfo.new(0.2), { Transparency = 1 }):Play()
-
-            TweenService:Create(titleLbl, TweenInfo.new(0.2), { TextTransparency = 1 }):Play()
-
-            local tw = TweenService:Create(msgLbl, TweenInfo.new(0.2), { TextTransparency = 1 })
-
-            tw:Play()
-
-            tw.Completed:Wait()
-
-            toast:Destroy()
-
-        end)
-
+local function saveCurrentConfig()
+    local configData = {
+        FarmSpeed    = _G.FarmSpeed,
+        ItemDistance = _G.ItemDistance,
+        AutoRespawn  = _G.AutoRespawn,
+        AntiAFK      = _G.AntiAFK,
+        AutoSell     = _G.AutoSell,
+        AutoEventCandy = _G.AutoEventCandy,
+        AutoBuy      = _G.AutoBuy,
+        ItemESP      = _G.ItemESP,
+        ItemFarm     = _G.ItemFarm,
+        StandaloneNoClip = _G.StandaloneNoClip,
+        SelectedItems = _G.SelectedItems,
+    }
+
+    local ok, jsonStr = pcall(function()
+        return HttpService:JSONEncode(configData)
     end)
 
+    if ok and jsonStr and writefile then
+        writefile(configFile, jsonStr)
+        print("[UA Killer Hub | Config] Конфігурація успішно збережена у " .. configFile)
+        return true
+    else
+        warn("[UA Killer Hub | Config] Помилка збереження конфігурації у JSON!")
+        return false
+    end
 end
 
--- Верхня панель
-
-local TitleBar = Instance.new("Frame")
-
-TitleBar.Name             = "TitleBar"
-
-TitleBar.Size             = UDim2.new(1, 0, 0, 42)
-
-TitleBar.BackgroundColor3 = Color3.fromRGB(19, 21, 26)
-
-TitleBar.BorderSizePixel  = 0
-
-TitleBar.Parent           = MainFrame
-
-Instance.new("UICorner", TitleBar).CornerRadius = UDim.new(0, 10)
-
-local TitleLine = Instance.new("Frame", TitleBar)
-
-TitleLine.Size             = UDim2.new(1, 0, 0, 1)
-
-TitleLine.Position         = UDim2.new(0, 0, 1, -1)
-
-TitleLine.BackgroundColor3 = Color3.fromRGB(34, 38, 48)
-
-TitleLine.BorderSizePixel  = 0
-
-local TitleText = Instance.new("TextLabel", TitleBar)
-
-TitleText.Size             = UDim2.new(0, 140, 1, 0)
-
-TitleText.Position         = UDim2.new(0, 14, 0, 0)
-
-TitleText.BackgroundTransparency = 1
-
-TitleText.Text             = "UA Killer Hub"
-
-TitleText.Font             = Enum.Font.GothamBold
-
-TitleText.TextSize         = 14
-
-TitleText.TextColor3       = Color3.fromRGB(240, 242, 245)
-
-TitleText.TextXAlignment   = Enum.TextXAlignment.Left
-
-local Badge = Instance.new("TextLabel", TitleBar)
-
-Badge.Size             = UDim2.new(0, 36, 0, 18)
-
-Badge.Position         = UDim2.new(0, 126, 0.5, -9)
-
-Badge.BackgroundColor3 = Color3.fromRGB(139, 124, 246)
-
-Badge.Text             = "YBA"
-
-Badge.Font             = Enum.Font.GothamBold
-
-Badge.TextSize         = 10
-
-Badge.TextColor3       = Color3.fromRGB(255, 255, 255)
-
-Instance.new("UICorner", Badge).CornerRadius = UDim.new(0, 4)
-
-local CloseBtn = Instance.new("TextButton", TitleBar)
-
-CloseBtn.Size             = UDim2.new(0, 26, 0, 26)
-
-CloseBtn.Position         = UDim2.new(1, -34, 0.5, -13)
-
-CloseBtn.BackgroundColor3 = Color3.fromRGB(28, 31, 40)
-
-CloseBtn.Text             = "✕"
-
-CloseBtn.Font             = Enum.Font.GothamBold
-
-CloseBtn.TextSize         = 12
-
-CloseBtn.TextColor3       = Color3.fromRGB(160, 165, 175)
-
-Instance.new("UICorner", CloseBtn).CornerRadius = UDim.new(0, 6)
-
-local MinBtn = Instance.new("TextButton", TitleBar)
-
-MinBtn.Size             = UDim2.new(0, 26, 0, 26)
-
-MinBtn.Position         = UDim2.new(1, -66, 0.5, -13)
-
-MinBtn.BackgroundColor3 = Color3.fromRGB(28, 31, 40)
-
-MinBtn.Text             = "—"
-
-MinBtn.Font             = Enum.Font.GothamBold
-
-MinBtn.TextSize         = 12
-
-MinBtn.TextColor3       = Color3.fromRGB(160, 165, 175)
-
-Instance.new("UICorner", MinBtn).CornerRadius = UDim.new(0, 6)
-
-local dragging, dragInput, dragStart, startPos
-
-TitleBar.InputBegan:Connect(function(input)
-
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-
-        dragging  = true
-
-        dragStart = input.Position
-
-        startPos  = MainFrame.Position
-
-        input.Changed:Connect(function()
-
-            if input.UserInputState == Enum.UserInputState.End then dragging = false end
-
-        end)
-
+local function loadCurrentConfig()
+    if not isfile or not isfile(configFile) or not readfile then
+        return nil
     end
 
+    local raw = readfile(configFile)
+    local ok, decoded = pcall(function()
+        return HttpService:JSONDecode(raw)
+    end)
+
+    if ok and type(decoded) == "table" then
+        return decoded
+    end
+
+    warn("[UA Killer Hub | Config] Пошкоджений файл конфігурації!")
+    return nil
+end
+
+local function runSteppedAutoLoad()
+    print("[UA Killer Hub | AutoLoad] Початок поетапного застосування налаштувань...")
+    local cfg = loadCurrentConfig()
+    if not cfg then return end
+
+    local AUTOLOAD_STEP = 0.08
+
+    local function applyValue(key, val)
+        if manuallyChanged[key] then return end
+
+        if key == "FarmSpeed" and uiElementsRegistry["FarmSpeed_Slider"] then
+            uiElementsRegistry["FarmSpeed_Slider"]:SetValue(val)
+        elseif key == "ItemDistance" and uiElementsRegistry["ItemDistance_Slider"] then
+            uiElementsRegistry["ItemDistance_Slider"]:SetValue(val)
+        elseif key == "AutoRespawn" and uiElementsRegistry["AutoRespawn_Toggle"] then
+            uiElementsRegistry["AutoRespawn_Toggle"]:SetValue(val)
+        elseif key == "AntiAFK" and uiElementsRegistry["AntiAFK_Toggle"] then
+            uiElementsRegistry["AntiAFK_Toggle"]:SetValue(val)
+        elseif key == "StandaloneNoClip" and uiElementsRegistry["StandaloneNoClip_Toggle"] then
+            uiElementsRegistry["StandaloneNoClip_Toggle"]:SetValue(val)
+        elseif key == "ItemESP" and uiElementsRegistry["ItemESP_Toggle"] then
+            uiElementsRegistry["ItemESP_Toggle"]:SetValue(val)
+        elseif key == "AutoSell" and uiElementsRegistry["AutoSell_Toggle"] then
+            uiElementsRegistry["AutoSell_Toggle"]:SetValue(val)
+        elseif key == "AutoEventCandy" and uiElementsRegistry["AutoEventCandy_Toggle"] then
+            uiElementsRegistry["AutoEventCandy_Toggle"]:SetValue(val)
+        elseif key == "AutoBuy" and uiElementsRegistry["AutoBuy_Toggle"] then
+            uiElementsRegistry["AutoBuy_Toggle"]:SetValue(val)
+        elseif key == "ItemFarm" and uiElementsRegistry["ItemFarm_Toggle"] then
+            uiElementsRegistry["ItemFarm_Toggle"]:SetValue(val)
+        end
+    end
+
+    applyValue("FarmSpeed", cfg.FarmSpeed or defaultSettings.FarmSpeed)
+    task.wait(AUTOLOAD_STEP)
+    applyValue("ItemDistance", cfg.ItemDistance or defaultSettings.ItemDistance)
+    task.wait(AUTOLOAD_STEP)
+    applyValue("AutoRespawn", cfg.AutoRespawn ~= nil and cfg.AutoRespawn or defaultSettings.AutoRespawn)
+    task.wait(AUTOLOAD_STEP)
+
+    if cfg.SelectedItems and type(cfg.SelectedItems) == "table" then
+        for itemName, state in pairs(cfg.SelectedItems) do
+            _G.SelectedItems[itemName] = state
+            local regKey = "ItemSelect_" .. itemName
+            if uiElementsRegistry[regKey] then
+                uiElementsRegistry[regKey]:SetValue(state)
+            end
+        end
+    end
+    task.wait(AUTOLOAD_STEP)
+
+    if cfg.AntiAFK ~= nil then applyValue("AntiAFK", cfg.AntiAFK) task.wait(AUTOLOAD_STEP) end
+    if cfg.StandaloneNoClip ~= nil then applyValue("StandaloneNoClip", cfg.StandaloneNoClip) task.wait(AUTOLOAD_STEP) end
+    if cfg.ItemESP ~= nil then applyValue("ItemESP", cfg.ItemESP) task.wait(AUTOLOAD_STEP) end
+    if cfg.AutoSell ~= nil then applyValue("AutoSell", cfg.AutoSell) task.wait(AUTOLOAD_STEP) end
+    if cfg.AutoEventCandy ~= nil then applyValue("AutoEventCandy", cfg.AutoEventCandy) task.wait(AUTOLOAD_STEP) end
+    if cfg.AutoBuy ~= nil then applyValue("AutoBuy", cfg.AutoBuy) task.wait(AUTOLOAD_STEP) end
+    if cfg.ItemFarm ~= nil then applyValue("ItemFarm", cfg.ItemFarm) task.wait(AUTOLOAD_STEP) end
+
+    print("[UA Killer Hub | AutoLoad] Поетапне відновлення конфігурації завершено.")
+end
+
+-- =======================================================
+-- МОДУЛЬ ІНТЕРФЕЙСУ MONHUB GUI
+-- =======================================================
+local parentGui = (gethui and gethui()) or game:GetService("CoreGui"):FindFirstChild("RobloxGui") or player:WaitForChild("PlayerGui")
+local existingHub = parentGui:FindFirstChild("UAKillerHub_MonHub")
+if existingHub then existingHub:Destroy() end
+
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "UAKillerHub_MonHub"
+screenGui.ResetOnSpawn = false
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+screenGui.Parent = parentGui
+
+local mainFrame = Instance.new("Frame")
+mainFrame.Name = "MainFrame"
+mainFrame.Size = UDim2.new(0, 520, 0, 400)
+mainFrame.Position = UDim2.new(0.5, -260, 0.5, -200)
+mainFrame.BackgroundColor3 = Color3.fromRGB(23, 25, 31)
+mainFrame.BorderSizePixel = 0
+mainFrame.ClipsDescendants = true
+mainFrame.Parent = screenGui
+
+local mainCorner = Instance.new("UICorner")
+mainCorner.CornerRadius = UDim.new(0, 10)
+mainCorner.Parent = mainFrame
+
+local mainStroke = Instance.new("UIStroke")
+mainStroke.Color = Color3.fromRGB(45, 49, 61)
+mainStroke.Thickness = 1
+mainStroke.Parent = mainFrame
+
+-- Верхня панель (TopBar)
+local topBar = Instance.new("Frame")
+topBar.Name = "TopBar"
+topBar.Size = UDim2.new(1, 0, 0, 40)
+topBar.BackgroundColor3 = Color3.fromRGB(31, 34, 43)
+topBar.BorderSizePixel = 0
+topBar.Parent = mainFrame
+
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Name = "TitleLabel"
+titleLabel.Size = UDim2.new(0, 200, 1, 0)
+titleLabel.Position = UDim2.new(0, 14, 0, 0)
+titleLabel.BackgroundTransparency = 1
+titleLabel.Text = "UA Killer Hub  <font color='#8B7CF6'>[YBA]</font>"
+titleLabel.RichText = true
+titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+titleLabel.Font = Enum.Font.GothamBold
+titleLabel.TextSize = 14
+titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+titleLabel.Parent = topBar
+
+-- Кнопки керування вікном (Згорнути / Закрити)
+local controlContainer = Instance.new("Frame")
+controlContainer.Size = UDim2.new(0, 60, 1, 0)
+controlContainer.Position = UDim2.new(1, -65, 0, 0)
+controlContainer.BackgroundTransparency = 1
+controlContainer.Parent = topBar
+
+local closeButton = Instance.new("TextButton")
+closeButton.Size = UDim2.new(0, 24, 0, 24)
+closeButton.Position = UDim2.new(1, -26, 0.5, -12)
+closeButton.BackgroundColor3 = Color3.fromRGB(45, 49, 61)
+closeButton.Text = "✕"
+closeButton.TextColor3 = Color3.fromRGB(200, 200, 200)
+closeButton.Font = Enum.Font.GothamBold
+closeButton.TextSize = 12
+closeButton.BorderSizePixel = 0
+closeButton.Parent = controlContainer
+
+local closeCorner = Instance.new("UICorner")
+closeCorner.CornerRadius = UDim.new(0, 6)
+closeCorner.Parent = closeButton
+
+closeButton.MouseButton1Click:Connect(function()
+    mainFrame.Visible = false
 end)
 
-TitleBar.InputChanged:Connect(function(input)
+local minButton = Instance.new("TextButton")
+minButton.Size = UDim2.new(0, 24, 0, 24)
+minButton.Position = UDim2.new(1, -54, 0.5, -12)
+minButton.BackgroundColor3 = Color3.fromRGB(45, 49, 61)
+minButton.Text = "—"
+minButton.TextColor3 = Color3.fromRGB(200, 200, 200)
+minButton.Font = Enum.Font.GothamBold
+minButton.TextSize = 12
+minButton.BorderSizePixel = 0
+minButton.Parent = controlContainer
 
-    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+local minCorner = Instance.new("UICorner")
+minCorner.CornerRadius = UDim.new(0, 6)
+minCorner.Parent = minButton
 
-        dragInput = input
-
+local isMinimized = false
+minButton.MouseButton1Click:Connect(function()
+    isMinimized = not isMinimized
+    if isMinimized then
+        TweenService:Create(mainFrame, TweenInfo.new(0.3, Enum.EasingStyle.Quart), { Size = UDim2.new(0, 520, 0, 40) }):Play()
+    else
+        TweenService:Create(mainFrame, TweenInfo.new(0.3, Enum.EasingStyle.Quart), { Size = UDim2.new(0, 520, 0, 400) }):Play()
     end
+end)
 
+-- Перетягування вікна мишкою
+local dragging, dragInput, dragStart, startPos
+topBar.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        startPos = mainFrame.Position
+
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
+    end
+end)
+
+topBar.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+        dragInput = input
+    end
 end)
 
 UserInputService.InputChanged:Connect(function(input)
-
     if input == dragInput and dragging then
-
         local delta = input.Position - dragStart
-
-        MainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-
+        mainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
     end
-
 end)
 
-local isMinimized = false
-
-MinBtn.MouseButton1Click:Connect(function()
-
-    isMinimized = not isMinimized
-
-    local targetSize = isMinimized and UDim2.new(0, 520, 0, 42) or UDim2.new(0, 520, 0, 400)
-
-    TweenService:Create(MainFrame, TweenInfo.new(0.25, Enum.EasingStyle.Quad), { Size = targetSize }):Play()
-
-end)
-
-CloseBtn.MouseButton1Click:Connect(function()
-
-    MainFrame.Visible = false
-
-    showNotification("UA Killer Hub", "Натисніть RightShift, щоб відкрити знову", 3.5)
-
-end)
-
-UserInputService.InputBegan:Connect(function(input, gpe)
-
-    if not gpe and input.KeyCode == Enum.KeyCode.RightShift then
-
-        MainFrame.Visible = not MainFrame.Visible
-
+-- Гаряча клавіша приховування (RightShift)
+UserInputService.InputBegan:Connect(function(input, processed)
+    if not processed and input.KeyCode == Enum.KeyCode.RightShift then
+        mainFrame.Visible = not mainFrame.Visible
     end
-
 end)
 
--- Сайдбар
+-- Сайдбар меню та навігації
+local sideBar = Instance.new("Frame")
+sideBar.Name = "SideBar"
+sideBar.Size = UDim2.new(0, 130, 1, -40)
+sideBar.Position = UDim2.new(0, 0, 0, 40)
+sideBar.BackgroundColor3 = Color3.fromRGB(27, 30, 38)
+sideBar.BorderSizePixel = 0
+sideBar.Parent = mainFrame
 
-local Sidebar = Instance.new("Frame", MainFrame)
+local tabListLayout = Instance.new("UIListLayout")
+tabListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+tabListLayout.Padding = UDim.new(0, 4)
+tabListLayout.Parent = sideBar
 
-Sidebar.Name             = "Sidebar"
+local sidePadding = Instance.new("UIPadding")
+sidePadding.PaddingTop = UDim.new(0, 8)
+sidePadding.PaddingLeft = UDim.new(0, 8)
+sidePadding.PaddingRight = UDim.new(0, 8)
+sidePadding.Parent = sideBar
 
-Sidebar.Size             = UDim2.new(0, 130, 1, -42)
+-- Контейнер для вмісту сторінок
+local contentArea = Instance.new("Frame")
+contentArea.Name = "ContentArea"
+contentArea.Size = UDim2.new(1, -130, 1, -40)
+contentArea.Position = UDim2.new(0, 130, 0, 40)
+contentArea.BackgroundColor3 = Color3.fromRGB(23, 25, 31)
+contentArea.BorderSizePixel = 0
+contentArea.Parent = mainFrame
 
-Sidebar.Position         = UDim2.new(0, 0, 0, 42)
+-- Поле пошуку функцій
+local searchBar = Instance.new("TextBox")
+searchBar.Name = "SearchBar"
+searchBar.Size = UDim2.new(1, -20, 0, 30)
+searchBar.Position = UDim2.new(0, 10, 0, 8)
+searchBar.BackgroundColor3 = Color3.fromRGB(31, 34, 43)
+searchBar.PlaceholderText = "Пошук функцій..."
+searchBar.PlaceholderColor3 = Color3.fromRGB(120, 120, 140)
+searchBar.Text = ""
+searchBar.TextColor3 = Color3.fromRGB(255, 255, 255)
+searchBar.Font = Enum.Font.Gotham
+searchBar.TextSize = 12
+searchBar.BorderSizePixel = 0
+searchBar.Parent = contentArea
 
-Sidebar.BackgroundColor3 = Color3.fromRGB(18, 20, 25)
+local searchCorner = Instance.new("UICorner")
+searchCorner.CornerRadius = UDim.new(0, 6)
+searchCorner.Parent = searchBar
 
-Sidebar.BorderSizePixel  = 0
+local searchPadding = Instance.new("UIPadding")
+searchPadding.PaddingLeft = UDim.new(0, 10)
+searchPadding.Parent = searchBar
 
-local SidebarList = Instance.new("UIListLayout", Sidebar)
+local pagesFolder = Instance.new("Folder")
+pagesFolder.Name = "Pages"
+pagesFolder.Parent = contentArea
 
-SidebarList.Padding             = UDim.new(0, 6)
+local tabs = {}
+local currentTab = nil
 
-SidebarList.HorizontalAlignment = Enum.HorizontalAlignment.Center
+local function showNotification(title, content, duration)
+    task.spawn(function()
+        local notifyFrame = Instance.new("Frame")
+        notifyFrame.Size = UDim2.new(0, 220, 0, 50)
+        notifyFrame.Position = UDim2.new(1, -230, 1, -60)
+        notifyFrame.BackgroundColor3 = Color3.fromRGB(31, 34, 43)
+        notifyFrame.BorderSizePixel = 0
+        notifyFrame.Parent = screenGui
 
-SidebarList.SortOrder           = Enum.SortOrder.LayoutOrder
+        local notifCorner = Instance.new("UICorner")
+        notifCorner.CornerRadius = UDim.new(0, 8)
+        notifCorner.Parent = notifyFrame
 
-local SidebarPad = Instance.new("UIPadding", Sidebar)
+        local notifStroke = Instance.new("UIStroke")
+        notifStroke.Color = Color3.fromRGB(139, 124, 246)
+        notifStroke.Thickness = 1
+        notifStroke.Parent = notifyFrame
 
-SidebarPad.PaddingTop   = UDim.new(0, 12)
+        local notifTitle = Instance.new("TextLabel")
+        notifTitle.Size = UDim2.new(1, -12, 0, 20)
+        notifTitle.Position = UDim2.new(0, 8, 0, 4)
+        notifTitle.BackgroundTransparency = 1
+        notifTitle.Text = title
+        notifTitle.TextColor3 = Color3.fromRGB(139, 124, 246)
+        notifTitle.Font = Enum.Font.GothamBold
+        notifTitle.TextSize = 12
+        notifTitle.TextXAlignment = Enum.TextXAlignment.Left
+        notifTitle.Parent = notifyFrame
 
-SidebarPad.PaddingLeft  = UDim.new(0, 6)
+        local notifDesc = Instance.new("TextLabel")
+        notifDesc.Size = UDim2.new(1, -12, 0, 20)
+        notifDesc.Position = UDim2.new(0, 8, 0, 24)
+        notifDesc.BackgroundTransparency = 1
+        notifDesc.Text = content
+        notifDesc.TextColor3 = Color3.fromRGB(220, 220, 220)
+        notifDesc.Font = Enum.Font.Gotham
+        notifDesc.TextSize = 11
+        notifDesc.TextXAlignment = Enum.TextXAlignment.Left
+        notifDesc.Parent = notifyFrame
 
-SidebarPad.PaddingRight = UDim.new(0, 6)
-
--- Контентна панель
-
-local ContentArea = Instance.new("Frame", MainFrame)
-
-ContentArea.Name                  = "ContentArea"
-
-ContentArea.Size                  = UDim2.new(1, -130, 1, -42)
-
-ContentArea.Position              = UDim2.new(0, 130, 0, 42)
-
-ContentArea.BackgroundTransparency = 1
-
-local SearchFrame = Instance.new("Frame", ContentArea)
-
-SearchFrame.Name             = "SearchFrame"
-
-SearchFrame.Size             = UDim2.new(1, -24, 0, 32)
-
-SearchFrame.Position         = UDim2.new(0, 12, 0, 10)
-
-SearchFrame.BackgroundColor3 = Color3.fromRGB(28, 31, 39)
-
-SearchFrame.BorderSizePixel  = 0
-
-Instance.new("UICorner", SearchFrame).CornerRadius = UDim.new(0, 6)
-
-local SearchIcon = Instance.new("TextLabel", SearchFrame)
-
-SearchIcon.Size                  = UDim2.new(0, 24, 1, 0)
-
-SearchIcon.BackgroundTransparency = 1
-
-SearchIcon.Text                  = "🔍"
-
-SearchIcon.Font                  = Enum.Font.Gotham
-
-SearchIcon.TextSize              = 11
-
-SearchIcon.TextColor3            = Color3.fromRGB(150, 155, 165)
-
-local SearchBox = Instance.new("TextBox", SearchFrame)
-
-SearchBox.Size                  = UDim2.new(1, -30, 1, 0)
-
-SearchBox.Position              = UDim2.new(0, 28, 0, 0)
-
-SearchBox.BackgroundTransparency = 1
-
-SearchBox.PlaceholderText       = "Пошук функцій..."
-
-SearchBox.PlaceholderColor3     = Color3.fromRGB(110, 115, 130)
-
-SearchBox.TextColor3            = Color3.fromRGB(240, 242, 245)
-
-SearchBox.Font                  = Enum.Font.Gotham
-
-SearchBox.TextSize              = 12
-
-SearchBox.TextXAlignment        = Enum.TextXAlignment.Left
-
-SearchBox.ClearTextOnFocus      = false
-
-local PagesFolder = Instance.new("Folder", ContentArea)
-
-PagesFolder.Name = "Pages"
-
-local tabs      = {}
-
-local activeTab = nil
-
-local function filterItems(query)
-
-    query = query:lower()
-
-    for _, item in ipairs(uiElementsRegistry) do
-
-        if item.Page == activeTab then
-
-            item.Frame.Visible = (query == "" or item.Name:lower():find(query, 1, true) ~= nil)
-
+        task.wait(duration or 3)
+        if notifyFrame and notifyFrame.Parent then
+            TweenService:Create(notifyFrame, TweenInfo.new(0.3), { BackgroundTransparency = 1 }):Play()
+            task.wait(0.3)
+            notifyFrame:Destroy()
         end
-
-    end
-
+    end)
 end
 
-SearchBox:GetPropertyChangedSignal("Text"):Connect(function()
-
-    filterItems(SearchBox.Text)
-
-end)
-
 local function switchTab(tabName)
+    for name, data in pairs(tabs) do
+        local isActive = (name == tabName)
+        data.Page.Visible = isActive
 
-    activeTab    = tabName
-
-    SearchBox.Text = ""
-
-    for name, tabData in pairs(tabs) do
-
-        local active = (name == tabName)
-
-        tabData.Page.Visible = active
-
-        TweenService:Create(tabData.Button, TweenInfo.new(0.2), {
-
-            BackgroundColor3 = active and Color3.fromRGB(139, 124, 246) or Color3.fromRGB(23, 25, 32),
-
-            TextColor3       = active and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(150, 155, 165),
-
-        }):Play()
-
+        if isActive then
+            TweenService:Create(data.Button, TweenInfo.new(0.2), {
+                BackgroundColor3 = Color3.fromRGB(139, 124, 246),
+                TextColor3 = Color3.fromRGB(255, 255, 255),
+            }):Play()
+            currentTab = tabName
+        else
+            TweenService:Create(data.Button, TweenInfo.new(0.2), {
+                BackgroundColor3 = Color3.fromRGB(31, 34, 43),
+                TextColor3 = Color3.fromRGB(180, 180, 190),
+            }):Play()
+        end
     end
-
-    filterItems("")
-
 end
 
 local function createTab(tabName, iconText)
+    local tabBtn = Instance.new("TextButton")
+    tabBtn.Name = tabName .. "_Tab"
+    tabBtn.Size = UDim2.new(1, 0, 0, 32)
+    tabBtn.BackgroundColor3 = Color3.fromRGB(31, 34, 43)
+    tabBtn.Text = (iconText or "•") .. "  " .. tabName
+    tabBtn.TextColor3 = Color3.fromRGB(180, 180, 190)
+    tabBtn.Font = Enum.Font.GothamBold
+    tabBtn.TextSize = 12
+    tabBtn.TextXAlignment = Enum.TextXAlignment.Left
+    tabBtn.BorderSizePixel = 0
+    tabBtn.Parent = sideBar
 
-    local btn = Instance.new("TextButton", Sidebar)
+    local btnPad = Instance.new("UIPadding")
+    btnPad.PaddingLeft = UDim.new(0, 10)
+    btnPad.Parent = tabBtn
 
-    btn.Name             = tabName .. "_Tab"
+    local btnCorner = Instance.new("UICorner")
+    btnCorner.CornerRadius = UDim.new(0, 6)
+    btnCorner.Parent = tabBtn
 
-    btn.Size             = UDim2.new(1, 0, 0, 34)
-
-    btn.BackgroundColor3 = Color3.fromRGB(23, 25, 32)
-
-    btn.Text             = (iconText or "•") .. "  " .. tabName
-
-    btn.Font             = Enum.Font.GothamMedium
-
-    btn.TextSize         = 12
-
-    btn.TextColor3       = Color3.fromRGB(150, 155, 165)
-
-    btn.TextXAlignment   = Enum.TextXAlignment.Left
-
-    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
-
-    Instance.new("UIPadding", btn).PaddingLeft = UDim.new(0, 10)
-
-    local page = Instance.new("ScrollingFrame", PagesFolder)
-
-    page.Name                = tabName .. "_Page"
-
-    page.Size                = UDim2.new(1, -24, 1, -56)
-
-    page.Position            = UDim2.new(0, 12, 0, 48)
-
+    local page = Instance.new("ScrollingFrame")
+    page.Name = tabName .. "_Page"
+    page.Size = UDim2.new(1, -20, 1, -50)
+    page.Position = UDim2.new(0, 10, 0, 44)
     page.BackgroundTransparency = 1
-
-    page.BorderSizePixel     = 0
-
-    page.ScrollBarThickness  = 3
-
+    page.BorderSizePixel = 0
+    page.ScrollBarThickness = 4
     page.ScrollBarImageColor3 = Color3.fromRGB(139, 124, 246)
+    page.Visible = false
+    page.Parent = pagesFolder
 
-    page.CanvasSize          = UDim2.new(0, 0, 0, 0)
+    local pageLayout = Instance.new("UIListLayout")
+    pageLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    pageLayout.Padding = UDim.new(0, 6)
+    pageLayout.Parent = page
 
-    page.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    pageLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+        page.CanvasSize = UDim2.new(0, 0, 0, pageLayout.AbsoluteContentSize.Y + 10)
+    end)
 
-    page.Visible             = false
+    tabs[tabName] = {
+        Button = tabBtn,
+        Page = page,
+    }
 
-    local list = Instance.new("UIListLayout", page)
-
-    list.Padding   = UDim.new(0, 8)
-
-    list.SortOrder = Enum.SortOrder.LayoutOrder
-
-    local pad = Instance.new("UIPadding", page)
-
-    pad.PaddingRight  = UDim.new(0, 4)
-
-    pad.PaddingBottom = UDim.new(0, 10)
-
-    tabs[tabName] = { Button = btn, Page = page }
-
-    btn.MouseButton1Click:Connect(function() switchTab(tabName) end)
+    tabBtn.MouseButton1Click:Connect(function()
+        switchTab(tabName)
+    end)
 
     return page
-
 end
 
+-- Фільтрація елементів через рядок пошуку
+searchBar:GetPropertyChangedSignal("Text"):Connect(function()
+    local query = searchBar.Text:lower()
+    if not currentTab or not tabs[currentTab] then return end
+
+    local activePage = tabs[currentTab].Page
+    for _, item in ipairs(activePage:GetChildren()) do
+        if item:IsA("Frame") and item:FindFirstChild("ItemName") then
+            local itemName = item.ItemName.Text:lower()
+            if query == "" or itemName:find(query) then
+                item.Visible = true
+            else
+                item.Visible = false
+            end
+        end
+    end
+end)
+
+-- Компоненти інтерфейсу (Секції, Перемикачі, Слайдери, Кнопки)
 local function createSection(page, tabName, text)
+    local secFrame = Instance.new("Frame")
+    secFrame.Name = "Section_" .. text
+    secFrame.Size = UDim2.new(1, 0, 0, 24)
+    secFrame.BackgroundTransparency = 1
+    secFrame.Parent = page
 
-    local sec = Instance.new("Frame", page)
-
-    sec.Size                  = UDim2.new(1, 0, 0, 24)
-
-    sec.BackgroundTransparency = 1
-
-    local lbl = Instance.new("TextLabel", sec)
-
-    lbl.Size                  = UDim2.new(1, 0, 1, 0)
-
-    lbl.BackgroundTransparency = 1
-
-    lbl.Text                  = text:upper()
-
-    lbl.Font                  = Enum.Font.GothamBold
-
-    lbl.TextSize              = 10
-
-    lbl.TextColor3            = Color3.fromRGB(139, 124, 246)
-
-    lbl.TextXAlignment        = Enum.TextXAlignment.Left
-
-    table.insert(uiElementsRegistry, { Name = text, Page = tabName, Frame = sec })
-
-    return sec
-
+    local secLabel = Instance.new("TextLabel")
+    secLabel.Name = "ItemName"
+    secLabel.Size = UDim2.new(1, 0, 1, 0)
+    secLabel.BackgroundTransparency = 1
+    secLabel.Text = "— " .. text
+    secLabel.TextColor3 = Color3.fromRGB(139, 124, 246)
+    secLabel.Font = Enum.Font.GothamBold
+    secLabel.TextSize = 11
+    secLabel.TextXAlignment = Enum.TextXAlignment.Left
+    secLabel.Parent = secFrame
 end
 
 local function createToggle(page, tabName, text, defaultVal, callback)
+    local card = Instance.new("Frame")
+    card.Name = "Toggle_" .. text
+    card.Size = UDim2.new(1, 0, 0, 36)
+    card.BackgroundColor3 = Color3.fromRGB(31, 34, 43)
+    card.BorderSizePixel = 0
+    card.Parent = page
 
-    local toggleState = (defaultVal == true)
+    local cardCorner = Instance.new("UICorner")
+    cardCorner.CornerRadius = UDim.new(0, 6)
+    cardCorner.Parent = card
 
-    local card = Instance.new("Frame", page)
+    local label = Instance.new("TextLabel")
+    label.Name = "ItemName"
+    label.Size = UDim2.new(1, -60, 1, 0)
+    label.Position = UDim2.new(0, 12, 0, 0)
+    label.BackgroundTransparency = 1
+    label.Text = text
+    label.TextColor3 = Color3.fromRGB(230, 230, 230)
+    label.Font = Enum.Font.Gotham
+    label.TextSize = 12
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Parent = card
 
-    card.Size             = UDim2.new(1, 0, 0, 36)
+    local switchBtn = Instance.new("TextButton")
+    switchBtn.Size = UDim2.new(0, 40, 0, 20)
+    switchBtn.Position = UDim2.new(1, -48, 0.5, -10)
+    switchBtn.BackgroundColor3 = defaultVal and Color3.fromRGB(139, 124, 246) or Color3.fromRGB(50, 54, 66)
+    switchBtn.Text = ""
+    switchBtn.BorderSizePixel = 0
+    switchBtn.Parent = card
 
-    card.BackgroundColor3 = Color3.fromRGB(28, 31, 39)
+    local switchCorner = Instance.new("UICorner")
+    switchCorner.CornerRadius = UDim.new(1, 0)
+    switchCorner.Parent = switchBtn
 
-    card.BorderSizePixel  = 0
-
-    Instance.new("UICorner", card).CornerRadius = UDim.new(0, 6)
-
-    local titleLbl = Instance.new("TextLabel", card)
-
-    titleLbl.Size                  = UDim2.new(1, -56, 1, 0)
-
-    titleLbl.Position              = UDim2.new(0, 12, 0, 0)
-
-    titleLbl.BackgroundTransparency = 1
-
-    titleLbl.Text                  = text
-
-    titleLbl.Font                  = Enum.Font.GothamMedium
-
-    titleLbl.TextSize              = 12
-
-    titleLbl.TextColor3            = Color3.fromRGB(230, 233, 240)
-
-    titleLbl.TextXAlignment        = Enum.TextXAlignment.Left
-
-    local switch = Instance.new("TextButton", card)
-
-    switch.Size             = UDim2.new(0, 36, 0, 20)
-
-    switch.Position         = UDim2.new(1, -44, 0.5, -10)
-
-    switch.BackgroundColor3 = toggleState and Color3.fromRGB(139, 124, 246) or Color3.fromRGB(42, 46, 58)
-
-    switch.Text             = ""
-
-    Instance.new("UICorner", switch).CornerRadius = UDim.new(1, 0)
-
-    local knob = Instance.new("Frame", switch)
-
-    knob.Size             = UDim2.new(0, 14, 0, 14)
-
-    knob.Position         = toggleState and UDim2.new(1, -17, 0.5, -7) or UDim2.new(0, 3, 0.5, -7)
-
+    local knob = Instance.new("Frame")
+    knob.Size = UDim2.new(0, 16, 0, 16)
+    knob.Position = defaultVal and UDim2.new(1, -18, 0.5, -8) or UDim2.new(0, 2, 0.5, -8)
     knob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    knob.BorderSizePixel = 0
+    knob.Parent = switchBtn
 
-    knob.BorderSizePixel  = 0
+    local knobCorner = Instance.new("UICorner")
+    knobCorner.CornerRadius = UDim.new(1, 0)
+    knobCorner.Parent = knob
 
-    Instance.new("UICorner", knob).CornerRadius = UDim.new(1, 0)
+    local state = defaultVal or false
 
-    local function setState(val, triggerCallback)
-
-        toggleState = (val == true)
-
-        TweenService:Create(switch, TweenInfo.new(0.2), {
-
-            BackgroundColor3 = toggleState and Color3.fromRGB(139, 124, 246) or Color3.fromRGB(42, 46, 58),
-
-        }):Play()
-
-        TweenService:Create(knob, TweenInfo.new(0.2), {
-
-            Position = toggleState and UDim2.new(1, -17, 0.5, -7) or UDim2.new(0, 3, 0.5, -7),
-
-        }):Play()
-
-        if triggerCallback and callback then callback(toggleState) end
-
+    local function updateVisuals()
+        if state then
+            TweenService:Create(switchBtn, TweenInfo.new(0.2), { BackgroundColor3 = Color3.fromRGB(139, 124, 246) }):Play()
+            TweenService:Create(knob, TweenInfo.new(0.2), { Position = UDim2.new(1, -18, 0.5, -8) }):Play()
+        else
+            TweenService:Create(switchBtn, TweenInfo.new(0.2), { BackgroundColor3 = Color3.fromRGB(50, 54, 66) }):Play()
+            TweenService:Create(knob, TweenInfo.new(0.2), { Position = UDim2.new(0, 2, 0.5, -8) }):Play()
+        end
     end
 
-    switch.MouseButton1Click:Connect(function()
-
-        setState(not toggleState, true)
-
+    switchBtn.MouseButton1Click:Connect(function()
+        state = not state
+        updateVisuals()
+        if callback then
+            task.spawn(callback, state)
+        end
     end)
 
-    local controlObj = {
-
-        Name  = text,
-
-        Page  = tabName,
-
-        Frame = card,
-
-        Set   = function(self, val, triggerCallback)
-
-            if triggerCallback == nil then triggerCallback = true end
-
-            setState(val, triggerCallback)
-
+    return {
+        SetValue = function(_, val)
+            state = val
+            updateVisuals()
+            if callback then
+                task.spawn(callback, state)
+            end
         end,
-
-        Get   = function() return toggleState end,
-
     }
-
-    table.insert(uiElementsRegistry, controlObj)
-
-    return controlObj
-
 end
 
-local function createSlider(page, tabName, text, min, max, step, defaultVal, callback)
+local function createSlider(page, tabName, text, min, max, defaultVal, callback)
+    local card = Instance.new("Frame")
+    card.Name = "Slider_" .. text
+    card.Size = UDim2.new(1, 0, 0, 50)
+    card.BackgroundColor3 = Color3.fromRGB(31, 34, 43)
+    card.BorderSizePixel = 0
+    card.Parent = page
 
-    local currentVal = defaultVal or min
+    local cardCorner = Instance.new("UICorner")
+    cardCorner.CornerRadius = UDim.new(0, 6)
+    cardCorner.Parent = card
 
-    local card = Instance.new("Frame", page)
+    local label = Instance.new("TextLabel")
+    label.Name = "ItemName"
+    label.Size = UDim2.new(1, -80, 0, 24)
+    label.Position = UDim2.new(0, 12, 0, 4)
+    label.BackgroundTransparency = 1
+    label.Text = text
+    label.TextColor3 = Color3.fromRGB(230, 230, 230)
+    label.Font = Enum.Font.Gotham
+    label.TextSize = 12
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Parent = card
 
-    card.Size             = UDim2.new(1, 0, 0, 48)
-
-    card.BackgroundColor3 = Color3.fromRGB(28, 31, 39)
-
-    card.BorderSizePixel  = 0
-
-    Instance.new("UICorner", card).CornerRadius = UDim.new(0, 6)
-
-    local titleLbl = Instance.new("TextLabel", card)
-
-    titleLbl.Size                  = UDim2.new(1, -60, 0, 20)
-
-    titleLbl.Position              = UDim2.new(0, 12, 0, 4)
-
-    titleLbl.BackgroundTransparency = 1
-
-    titleLbl.Text                  = text
-
-    titleLbl.Font                  = Enum.Font.GothamMedium
-
-    titleLbl.TextSize              = 12
-
-    titleLbl.TextColor3            = Color3.fromRGB(230, 233, 240)
-
-    titleLbl.TextXAlignment        = Enum.TextXAlignment.Left
-
-    local valLabel = Instance.new("TextLabel", card)
-
-    valLabel.Size                  = UDim2.new(0, 46, 0, 20)
-
-    valLabel.Position              = UDim2.new(1, -54, 0, 4)
-
+    local valLabel = Instance.new("TextLabel")
+    valLabel.Size = UDim2.new(0, 60, 0, 24)
+    valLabel.Position = UDim2.new(1, -70, 0, 4)
     valLabel.BackgroundTransparency = 1
+    valLabel.Text = tostring(defaultVal)
+    valLabel.TextColor3 = Color3.fromRGB(139, 124, 246)
+    valLabel.Font = Enum.Font.GothamBold
+    valLabel.TextSize = 12
+    valLabel.TextXAlignment = Enum.TextXAlignment.Right
+    valLabel.Parent = card
 
-    valLabel.Text                  = tostring(currentVal)
+    local track = Instance.new("Frame")
+    track.Size = UDim2.new(1, -24, 0, 6)
+    track.Position = UDim2.new(0, 12, 0, 34)
+    track.BackgroundColor3 = Color3.fromRGB(50, 54, 66)
+    track.BorderSizePixel = 0
+    track.Parent = card
 
-    valLabel.Font                  = Enum.Font.GothamBold
+    local trackCorner = Instance.new("UICorner")
+    trackCorner.CornerRadius = UDim.new(1, 0)
+    trackCorner.Parent = track
 
-    valLabel.TextSize              = 11
-
-    valLabel.TextColor3            = Color3.fromRGB(139, 124, 246)
-
-    valLabel.TextXAlignment        = Enum.TextXAlignment.Right
-
-    local bar = Instance.new("TextButton", card)
-
-    bar.Size             = UDim2.new(1, -24, 0, 6)
-
-    bar.Position         = UDim2.new(0, 12, 0, 32)
-
-    bar.BackgroundColor3 = Color3.fromRGB(42, 46, 58)
-
-    bar.Text             = ""
-
-    Instance.new("UICorner", bar).CornerRadius = UDim.new(1, 0)
-
-    local fill = Instance.new("Frame", bar)
-
-    fill.Size             = UDim2.new(math.clamp((currentVal - min) / (max - min), 0, 1), 0, 1, 0)
-
+    local fill = Instance.new("Frame")
+    local initRatio = math.clamp((defaultVal - min) / (max - min), 0, 1)
+    fill.Size = UDim2.new(initRatio, 0, 1, 0)
     fill.BackgroundColor3 = Color3.fromRGB(139, 124, 246)
+    fill.BorderSizePixel = 0
+    fill.Parent = track
 
-    fill.BorderSizePixel  = 0
-
-    Instance.new("UICorner", fill).CornerRadius = UDim.new(1, 0)
+    local fillCorner = Instance.new("UICorner")
+    fillCorner.CornerRadius = UDim.new(1, 0)
+    fillCorner.Parent = fill
 
     local draggingSlider = false
 
-    local function updateFromPos(x)
-
-        local rel     = math.clamp((x - bar.AbsolutePosition.X) / bar.AbsoluteSize.X, 0, 1)
-
-        local raw     = min + (max - min) * rel
-
-        local stepped = math.floor(raw / step + 0.5) * step
-
-        if step < 1 then stepped = tonumber(string.format("%.1f", stepped)) end
-
-        currentVal    = math.clamp(stepped, min, max)
-
-        valLabel.Text = tostring(currentVal)
-
-        fill.Size     = UDim2.new((currentVal - min) / (max - min), 0, 1, 0)
-
-        if callback then callback(currentVal) end
-
+    local function updateFromInput(input)
+        local posX = input.Position.X - track.AbsolutePosition.X
+        local ratio = math.clamp(posX / track.AbsoluteSize.X, 0, 1)
+        local val = math.floor(min + (max - min) * ratio)
+        fill.Size = UDim2.new(ratio, 0, 1, 0)
+        valLabel.Text = tostring(val)
+        if callback then
+            task.spawn(callback, val)
+        end
     end
 
-    bar.InputBegan:Connect(function(input)
-
+    track.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-
             draggingSlider = true
-
-            updateFromPos(input.Position.X)
-
+            updateFromInput(input)
         end
-
     end)
 
     UserInputService.InputEnded:Connect(function(input)
-
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-
             draggingSlider = false
-
         end
-
     end)
 
     UserInputService.InputChanged:Connect(function(input)
-
         if draggingSlider and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-
-            updateFromPos(input.Position.X)
-
+            updateFromInput(input)
         end
-
     end)
 
-    local controlObj = {
-
-        Name  = text,
-
-        Page  = tabName,
-
-        Frame = card,
-
-        Set   = function(self, val, triggerCallback)
-
-            val = tonumber(val)
-
-            if not val then return end
-
-            if triggerCallback == nil then triggerCallback = true end
-
-            currentVal    = math.clamp(val, min, max)
-
-            valLabel.Text = tostring(currentVal)
-
-            fill.Size     = UDim2.new((currentVal - min) / (max - min), 0, 1, 0)
-
-            if triggerCallback and callback then callback(currentVal) end
-
+    return {
+        SetValue = function(_, val)
+            local clamped = math.clamp(val, min, max)
+            local ratio = (clamped - min) / (max - min)
+            fill.Size = UDim2.new(ratio, 0, 1, 0)
+            valLabel.Text = tostring(clamped)
+            if callback then
+                task.spawn(callback, clamped)
+            end
         end,
-
-        Get   = function() return currentVal end,
-
     }
-
-    table.insert(uiElementsRegistry, controlObj)
-
-    return controlObj
-
 end
 
 local function createButton(page, tabName, text, callback)
+    local card = Instance.new("Frame")
+    card.Name = "Button_" .. text
+    card.Size = UDim2.new(1, 0, 0, 36)
+    card.BackgroundColor3 = Color3.fromRGB(31, 34, 43)
+    card.BorderSizePixel = 0
+    card.Parent = page
 
-    local card = Instance.new("Frame", page)
+    local cardCorner = Instance.new("UICorner")
+    cardCorner.CornerRadius = UDim.new(0, 6)
+    cardCorner.Parent = card
 
-    card.Size             = UDim2.new(1, 0, 0, 36)
-
-    card.BackgroundColor3 = Color3.fromRGB(28, 31, 39)
-
-    card.BorderSizePixel  = 0
-
-    Instance.new("UICorner", card).CornerRadius = UDim.new(0, 6)
-
-    local btn = Instance.new("TextButton", card)
-
-    btn.Size                  = UDim2.new(1, 0, 1, 0)
-
+    local btn = Instance.new("TextButton")
+    btn.Name = "ItemName"
+    btn.Size = UDim2.new(1, 0, 1, 0)
     btn.BackgroundTransparency = 1
-
-    btn.Text                  = text
-
-    btn.Font                  = Enum.Font.GothamMedium
-
-    btn.TextSize              = 12
-
-    btn.TextColor3            = Color3.fromRGB(240, 242, 245)
-
-    btn.MouseEnter:Connect(function()
-
-        TweenService:Create(card, TweenInfo.new(0.15), { BackgroundColor3 = Color3.fromRGB(36, 40, 52) }):Play()
-
-    end)
-
-    btn.MouseLeave:Connect(function()
-
-        TweenService:Create(card, TweenInfo.new(0.15), { BackgroundColor3 = Color3.fromRGB(28, 31, 39) }):Play()
-
-    end)
+    btn.Text = text
+    btn.TextColor3 = Color3.fromRGB(230, 230, 230)
+    btn.Font = Enum.Font.GothamBold
+    btn.TextSize = 12
+    btn.Parent = card
 
     btn.MouseButton1Click:Connect(function()
-
-        TweenService:Create(card, TweenInfo.new(0.08), { BackgroundColor3 = Color3.fromRGB(139, 124, 246) }):Play()
-
-        task.wait(0.08)
-
-        TweenService:Create(card, TweenInfo.new(0.15), { BackgroundColor3 = Color3.fromRGB(28, 31, 39) }):Play()
-
-        if callback then callback() end
-
+        TweenService:Create(card, TweenInfo.new(0.1), { BackgroundColor3 = Color3.fromRGB(139, 124, 246) }):Play()
+        task.wait(0.1)
+        TweenService:Create(card, TweenInfo.new(0.2), { BackgroundColor3 = Color3.fromRGB(31, 34, 43) }):Play()
+        if callback then
+            task.spawn(callback)
+        end
     end)
-
-    table.insert(uiElementsRegistry, { Name = text, Page = tabName, Frame = card })
-
-    return btn
-
-end
-
-local function createStatusLabel(page, tabName, initialText)
-
-    local card = Instance.new("Frame", page)
-
-    card.Size             = UDim2.new(1, 0, 0, 34)
-
-    card.BackgroundColor3 = Color3.fromRGB(24, 27, 34)
-
-    card.BorderSizePixel  = 0
-
-    Instance.new("UICorner", card).CornerRadius = UDim.new(0, 6)
-
-    local stroke = Instance.new("UIStroke", card)
-
-    stroke.Color     = Color3.fromRGB(42, 46, 58)
-
-    stroke.Thickness = 1
-
-    local lbl = Instance.new("TextLabel", card)
-
-    lbl.Size                  = UDim2.new(1, -20, 1, 0)
-
-    lbl.Position              = UDim2.new(0, 10, 0, 0)
-
-    lbl.BackgroundTransparency = 1
-
-    lbl.Text                  = initialText
-
-    lbl.Font                  = Enum.Font.GothamMedium
-
-    lbl.TextSize              = 12
-
-    lbl.TextColor3            = Color3.fromRGB(139, 124, 246)
-
-    lbl.TextXAlignment        = Enum.TextXAlignment.Left
-
-    table.insert(uiElementsRegistry, { Name = "Статус", Page = tabName, Frame = card })
-
-    return { Set = function(self, txt) lbl.Text = txt end }
-
 end
 
 -- =======================================================
-
--- СТОРІНКИ ТА ЕЛЕМЕНТИ UI
-
+-- СТВОРЕННЯ СТОРІНОК ТА ПРИВ'ЯЗКА ФУНКЦІЙ
 -- =======================================================
-
 local mainPage = createTab("Головна",  "🏠")
-
 local farmPage = createTab("Автофарм", "⚡")
-
 local shopPage = createTab("Магазин",  "🛒")
-
 local miscPage = createTab("Інше",     "⚙")
 
-local autoLoadToggle, jumpPowerSlider, flySpeedSlider, pickupDistanceSlider
+-- 1. СТОРІНКА ГОЛОВНА
+createSection(mainPage, "Головна", "Управління конфігурацією")
 
-local itemEspToggle, autoSellToggle, autoCandyToggle
-
-local autoBuyToggle, antiAfkToggle, noclipToggle, autoRespawnToggle
-
-local itemToggleControls = {}
-
-local saveCurrentConfig, loadCurrentConfig
-
--- ── Головна ──────────────────────────────────────────────
-
-createSection(mainPage, "Головна", "Конфігурація")
-
-autoLoadToggle = createToggle(mainPage, "Головна", "Автозавантаження при старті", shouldAutoLoad, function(value)
-
+local autoLoadToggle = createToggle(mainPage, "Головна", "Автозавантаження при старті", shouldAutoLoad, function(value)
     shouldAutoLoad = value
+    if writefile then
+        writefile(autoLoadFile, value and "true" or "false")
+    end
+    showNotification("UA Killer Hub", "Автозавантаження: " .. (value and "Увімкнено" or "Вимкнено"), 2)
+end)
+uiElementsRegistry["AutoLoad_Toggle"] = autoLoadToggle
 
-    pcall(function()
-
-        if writefile then writefile(autoLoadFile, tostring(value)) end
-
-    end)
-
-    print("[UA Killer Hub | Config] Автозавантаження збережено: " .. tostring(value))
-
+createButton(mainPage, "Головна", "Зберегти налаштування", function()
+    if saveCurrentConfig() then
+        showNotification("UA Killer Hub", "Конфігурацію збережено успішно!", 3)
+    else
+        showNotification("UA Killer Hub", "Помилка збереження конфігу!", 3)
+    end
 end)
 
-createButton(mainPage, "Головна", "Завантажити конфіг вручну", function()
-
-    if loadCurrentConfig then loadCurrentConfig(false) end
-
+createButton(mainPage, "Головна", "Завантажити збережені налаштування", function()
+    runSteppedAutoLoad()
+    showNotification("UA Killer Hub", "Налаштування відновлено!", 3)
 end)
 
-createButton(mainPage, "Головна", "Зберегти поточний конфіг", function()
+-- 2. СТОРІНКА АВТОФАРМ
+createSection(farmPage, "Автофарм", "Параметри польоту та збору")
 
-    if saveCurrentConfig then saveCurrentConfig() end
+local statusCard = Instance.new("Frame")
+statusCard.Size = UDim2.new(1, 0, 0, 32)
+statusCard.BackgroundColor3 = Color3.fromRGB(31, 34, 43)
+statusCard.BorderSizePixel = 0
+statusCard.Parent = farmPage
 
-end)
+local statusCorner = Instance.new("UICorner")
+statusCorner.CornerRadius = UDim.new(0, 6)
+statusCorner.Parent = statusCard
 
-createSection(mainPage, "Головна", "Характеристики")
-
-jumpPowerSlider = createSlider(mainPage, "Головна", "Висота стрибка (JumpPower)", 50, 200, 1, JP_Value, function(val)
-
-    JP_Value = val
-
-    applyJumpPower()
-
-end)
-
--- ── Автофарм ─────────────────────────────────────────────
-
-createSection(farmPage, "Автофарм", "Основні параметри")
-
-local statusLabel = createStatusLabel(farmPage, "Автофарм", "Статус: Очікування...")
+local statusLabel = Instance.new("TextLabel")
+statusLabel.Size = UDim2.new(1, -20, 1, 0)
+statusLabel.Position = UDim2.new(0, 10, 0, 0)
+statusLabel.BackgroundTransparency = 1
+statusLabel.Text = "Статус: Очікування..."
+statusLabel.TextColor3 = Color3.fromRGB(180, 180, 190)
+statusLabel.Font = Enum.Font.Gotham
+statusLabel.TextSize = 11
+statusLabel.TextXAlignment = Enum.TextXAlignment.Left
+statusLabel.Parent = statusCard
 
 task.spawn(function()
-
-    while task.wait(0.35) do
-
-        pcall(function() statusLabel:Set("Статус: " .. farmStatusText) end)
-
+    while true do
+        task.wait(0.2)
+        statusLabel.Text = "Статус: " .. farmStatusText
     end
-
 end)
 
-flySpeedSlider = createSlider(farmPage, "Автофарм", "Швидкість польоту", 50, 350, 5, _G.FlySpeed, function(val)
-
-    _G.FlySpeed = val
-
+local speedSlider = createSlider(farmPage, "Автофарм", "Швидкість польоту", 20, 120, _G.FarmSpeed, function(val)
+    _G.FarmSpeed = val
 end)
+uiElementsRegistry["FarmSpeed_Slider"] = speedSlider
 
-pickupDistanceSlider = createSlider(farmPage, "Автофарм", "Дистанція підбору (Неактивно)", 2, 8, 0.5, _G.PickupDistance, function(val)
-
-    _G.PickupDistance = val
-
+local distSlider = createSlider(farmPage, "Автофарм", "Максимальна дистанція", 500, 10000, _G.ItemDistance, function(val)
+    _G.ItemDistance = val
 end)
+uiElementsRegistry["ItemDistance_Slider"] = distSlider
 
-itemEspToggle = createToggle(farmPage, "Автофарм", "Увімкнути ESP", _G.ItemESP, function(val)
-
-    manuallyChanged.ItemESP = true
-
+local itemEspToggle = createToggle(farmPage, "Автофарм", "Увімкнути ESP", _G.ItemESP, function(val)
+    markManuallyChanged("ItemESP")
     _G.ItemESP = val
-
 end)
+uiElementsRegistry["ItemESP_Toggle"] = itemEspToggle
 
--- Ініціалізація перемикача ItemFarm через єдиний контролер
-
-itemFarmToggle = createToggle(farmPage, "Автофарм", "Увімкнути автофарм", _G.ItemFarm, function(value)
-
-    manuallyChanged.ItemFarm = true
-
-    setItemFarmState(value)
-
-end)
-
-createSection(farmPage, "Автофарм", "Фільтр предметів")
-
-createButton(farmPage, "Автофарм", "Увімкнути всі предмети", function()
-
-    for name in pairs(_G.SelectedItems) do
-
-        _G.SelectedItems[name] = true
-
-        if itemToggleControls[name] then itemToggleControls[name]:Set(true, false) end
-
+local itemFarmToggle = createToggle(farmPage, "Автофарм", "Увімкнути автофарм", _G.ItemFarm, function(value)
+    markManuallyChanged("ItemFarm")
+    _G.ItemFarm = value
+    if value then
+        farmSessionId = farmSessionId + 1
+        farmThreadActive = true
+        runItemFarmLoop(farmSessionId)
+    else
+        farmSessionId = farmSessionId + 1
+        cleanupFlight()
     end
-
-    lastCacheRefresh = 0
-
 end)
+uiElementsRegistry["ItemFarm_Toggle"] = itemFarmToggle
 
-createButton(farmPage, "Автофарм", "Вимкнути всі предмети", function()
+createSection(farmPage, "Автофарм", "Вибір предметів для збору")
 
-    for name in pairs(_G.SelectedItems) do
+local itemList = {
+    "Mysterious Arrow", "Rokakaka", "Pure Rokakaka", "Lucky Arrow",
+    "Rib Cage of The Saint's Corpse", "Left Arm of The Saint's Corpse",
+    "Heart of The Saint's Corpse", "Pelvis of The Saint's Corpse",
+    "Deo's Diary", "Steel Ball", "Quinton's Glove", "Ancient Scroll",
+    "Clackers", "Stone Mask", "Diamond", "Gold Coin",
+    "Candy", "Candy Corn",
+}
 
-        _G.SelectedItems[name] = false
-
-        if itemToggleControls[name] then itemToggleControls[name]:Set(false, false) end
-
+for _, itemName in ipairs(itemList) do
+    if _G.SelectedItems[itemName] == nil then
+        _G.SelectedItems[itemName] = true
     end
-
-    lastCacheRefresh = 0
-
-end)
-
-local sortedItems = {}
-
-for name in pairs(_G.SelectedItems) do table.insert(sortedItems, name) end
-
-table.sort(sortedItems)
-
-for _, itemName in ipairs(sortedItems) do
 
     local ctrl = createToggle(farmPage, "Автофарм", itemName, _G.SelectedItems[itemName], function(val)
-
         _G.SelectedItems[itemName] = val
-
-        lastCacheRefresh = 0
-
     end)
-
-    itemToggleControls[itemName] = ctrl
-
+    uiElementsRegistry["ItemSelect_" .. itemName] = ctrl
 end
 
--- ── Магазин ──────────────────────────────────────────────
+-- 3. СТОРІНКА МАГАЗИН
+createSection(shopPage, "Магазин", "Торговець та Івенти")
 
-createSection(shopPage, "Магазин", "Торгівля та івенти")
-
-autoSellToggle = createToggle(shopPage, "Магазин", "Автопродаж (крім Lucky Arrow)", _G.AutoSell, function(value)
-
-    manuallyChanged.AutoSell = true
-
+local autoSellToggle = createToggle(shopPage, "Магазин", "Автопродаж (крім Lucky Arrow)", _G.AutoSell, function(value)
+    markManuallyChanged("AutoSell")
     _G.AutoSell = value
-
-    if value then syncSellQueue()
-
-    else table.clear(sellQueue) closeMerchantDialogue() end
-
-end)
-
-autoCandyToggle = createToggle(shopPage, "Магазин", "Авто-здача конфет (Halloween Event)", _G.AutoEventCandy, function(value)
-
-    manuallyChanged.AutoEventCandy = true
-
-    _G.AutoEventCandy = value
-
-end)
-
-autoBuyToggle = createToggle(shopPage, "Магазин", "Автокупівля (Lucky Arrow)", _G.AutoBuy, function(value)
-
-    manuallyChanged.AutoBuy = true
-
-    _G.AutoBuy = value
-
     if value then
-
-        task.spawn(function()
-
-            while _G.AutoBuy do
-
-                local char   = player.Character
-
-                local remote = char and char:FindFirstChild("RemoteEvent")
-
-                if remote then remote:FireServer("PurchaseShopItem", { ItemName = "1x Lucky Arrow" }) end
-
-                task.wait(2.5 + math.random() * 1.5)
-
-            end
-
-        end)
-
+        syncSellQueue()
+    else
+        table.clear(sellQueue)
+        closeMerchantDialogue()
     end
-
 end)
+uiElementsRegistry["AutoSell_Toggle"] = autoSellToggle
 
--- ── Інше ─────────────────────────────────────────────────
+local autoCandyToggle = createToggle(shopPage, "Магазин", "Авто-здача конфет (Halloween Event)", _G.AutoEventCandy, function(value)
+    markManuallyChanged("AutoEventCandy")
+    _G.AutoEventCandy = value
+end)
+uiElementsRegistry["AutoEventCandy_Toggle"] = autoCandyToggle
 
+local autoBuyToggle = createToggle(shopPage, "Магазин", "Автокупівля (Lucky Arrow)", _G.AutoBuy, function(value)
+    markManuallyChanged("AutoBuy")
+    _G.AutoBuy = value
+    if value then
+        task.spawn(function()
+            while _G.AutoBuy do
+                local char = player.Character
+                local remote = char and char:FindFirstChild("RemoteEvent")
+                if remote then
+                    remote:FireServer("PurchaseShopItem", { ItemName = "1x Lucky Arrow" })
+                end
+                task.wait(2.5 + math.random() * 1.5)
+            end
+        end)
+    end
+end)
+uiElementsRegistry["AutoBuy_Toggle"] = autoBuyToggle
+
+-- 4. СТОРІНКА ІНШЕ
 createSection(miscPage, "Інше", "Додаткові функції")
 
-antiAfkToggle = createToggle(miscPage, "Інше", "Anti-AFK", _G.AntiAFK, function(value)
-
-    manuallyChanged.AntiAFK = true
-
+local antiAfkToggle = createToggle(miscPage, "Інше", "Anti-AFK", _G.AntiAFK, function(value)
+    markManuallyChanged("AntiAFK")
     _G.AntiAFK = value
-
-    if antiAfkConnection then antiAfkConnection:Disconnect() antiAfkConnection = nil end
-
+    if antiAfkConnection then
+        antiAfkConnection:Disconnect()
+        antiAfkConnection = nil
+    end
     if value then
-
         antiAfkConnection = player.Idled:Connect(function()
-
             VirtualUser:CaptureController()
-
             VirtualUser:ClickButton2(Vector2.new())
-
         end)
-
     end
-
 end)
+uiElementsRegistry["AntiAFK_Toggle"] = antiAfkToggle
 
-noclipToggle = createToggle(miscPage, "Інше", "NoClip (окремо від фарму)", _G.StandaloneNoClip, function(value)
-
-    manuallyChanged.StandaloneNoClip = true
-
+local noclipToggle = createToggle(miscPage, "Інше", "NoClip (окремо від фарму)", _G.StandaloneNoClip, function(value)
+    markManuallyChanged("StandaloneNoClip")
     _G.StandaloneNoClip = value
-
-    if value then ensureNoClip()
-
+    if value then
+        ensureNoClip()
     elseif not _G.ItemFarm and noclipConnection then
-
         noclipConnection:Disconnect()
-
         noclipConnection = nil
-
     end
-
 end)
+uiElementsRegistry["StandaloneNoClip_Toggle"] = noclipToggle
 
-autoRespawnToggle = createToggle(miscPage, "Інше", "Авто-респawn при смерті", _G.AutoRespawn, function(value)
-
-    manuallyChanged.AutoRespawn = true
-
+local autoRespawnToggle = createToggle(miscPage, "Інше", "Авто-респawn при смерті", _G.AutoRespawn, function(value)
+    markManuallyChanged("AutoRespawn")
     _G.AutoRespawn = value
-
 end)
+uiElementsRegistry["AutoRespawn_Toggle"] = autoRespawnToggle
 
 createButton(miscPage, "Інше", "Очистити заблоковані координати", function()
-
     table.clear(bannedCoordinates)
-
     lastCacheRefresh = 0
-
     showNotification("UA Killer Hub", "Чорний список координат очищено", 3)
-
 end)
 
-print("[UA Killer Hub | GUI] Усі вкладки та елементи MonHub створено.")
-
 -- =======================================================
-
--- СИСТЕМА КОНФІГУРАЦІЇ
-
--- =======================================================
-
-local function readConfigFromDisk()
-
-    if not (readfile and isfile) then return nil, "readfile/isfile недоступні" end
-
-    local fileExists = false
-
-    local ok = pcall(function() fileExists = isfile(configFile) end)
-
-    if not ok or not fileExists then return nil, "файл не знайдено" end
-
-    local rawContent
-
-    ok = pcall(function() rawContent = readfile(configFile) end)
-
-    if not ok or not rawContent or rawContent == "" then return nil, "помилка читання файлу" end
-
-    local data
-
-    ok = pcall(function() data = HttpService:JSONDecode(rawContent) end)
-
-    if not ok or type(data) ~= "table" then return nil, "пошкоджений JSON" end
-
-    return data, nil
-
-end
-
-saveCurrentConfig = function()
-
-    if not writefile then
-
-        showNotification("Помилка", "writefile не підтримується", 3)
-
-        return
-
-    end
-
-    local cfgData = {
-
-        SelectedItems    = _G.SelectedItems,
-
-        FlySpeed         = _G.FlySpeed,
-
-        PickupDistance   = _G.PickupDistance,
-
-        JumpPower        = JP_Value,
-
-        ItemESP          = _G.ItemESP,
-
-        ItemFarm         = _G.ItemFarm,
-
-        AutoSell         = _G.AutoSell,
-
-        AutoEventCandy   = _G.AutoEventCandy,
-
-        AutoBuy          = _G.AutoBuy,
-
-        AntiAFK          = _G.AntiAFK,
-
-        StandaloneNoClip = _G.StandaloneNoClip,
-
-        AutoRespawn      = _G.AutoRespawn,
-
-    }
-
-    print(string.format("[UA Killer Hub | Config] Збереження: ItemFarm=%s AutoSell=%s AutoEventCandy=%s",
-
-        tostring(cfgData.ItemFarm), tostring(cfgData.AutoSell), tostring(cfgData.AutoEventCandy)))
-
-    local jsonString
-
-    local ok, err = pcall(function() jsonString = HttpService:JSONEncode(cfgData) end)
-
-    if not ok or not jsonString then
-
-        warn("[UA Killer Hub | Config] Помилка JSON: " .. tostring(err))
-
-        showNotification("Помилка", "Не вдалося закодувати конфіг", 3)
-
-        return
-
-    end
-
-    ok, err = pcall(function() writefile(configFile, jsonString) end)
-
-    if ok then
-
-        print("[UA Killer Hub | Config] Збережено в " .. configFile)
-
-        showNotification("Успіх", "Налаштування конфігу збережено!", 3)
-
-    else
-
-        warn("[UA Killer Hub | Config] Помилка запису: " .. tostring(err))
-
-        showNotification("Помилка", "Не вдалося записати файл", 3)
-
-    end
-
-end
-
--- Ручне синхронне завантаження
-
-loadCurrentConfig = function(isAutoLoad)
-
-    local data, errMsg = readConfigFromDisk()
-
-    if not data then
-
-        local msg = "Конфіг: " .. errMsg
-
-        if isAutoLoad then print("[UA Killer Hub | Config] " .. msg)
-
-        else warn("[UA Killer Hub | Config] " .. msg)
-
-              showNotification("Конфіг", "Файл не знайдено або пошкоджено!", 3.5) end
-
-        return false
-
-    end
-
-    -- Слайдери та фільтр предметів
-
-    if data.JumpPower      and jumpPowerSlider      then jumpPowerSlider:Set(data.JumpPower, true) end
-
-    if data.FlySpeed       and flySpeedSlider       then flySpeedSlider:Set(data.FlySpeed, true) end
-
-    if data.PickupDistance and pickupDistanceSlider then pickupDistanceSlider:Set(data.PickupDistance, true) end
-
-    if type(data.SelectedItems) == "table" then
-
-        for itemName, state in pairs(data.SelectedItems) do
-
-            if _G.SelectedItems[itemName] ~= nil then
-
-                _G.SelectedItems[itemName] = state
-
-                if itemToggleControls[itemName] then itemToggleControls[itemName]:Set(state, false) end
-
-            end
-
-        end
-
-        lastCacheRefresh = 0
-
-    end
-
-    -- Перемикачі
-
-    if data.ItemESP          ~= nil and itemEspToggle      then itemEspToggle:Set(data.ItemESP, false) _G.ItemESP = data.ItemESP end
-
-    if data.AntiAFK          ~= nil and antiAfkToggle      then antiAfkToggle:Set(data.AntiAFK, true) end
-
-    if data.AutoRespawn      ~= nil and autoRespawnToggle  then autoRespawnToggle:Set(data.AutoRespawn, true) end
-
-    if data.StandaloneNoClip ~= nil and noclipToggle       then noclipToggle:Set(data.StandaloneNoClip, true) end
-
-    if data.AutoSell         ~= nil and autoSellToggle     then autoSellToggle:Set(data.AutoSell, true) end
-
-    if data.AutoEventCandy   ~= nil and autoCandyToggle    then autoCandyToggle:Set(data.AutoEventCandy, true) end
-
-    if data.AutoBuy          ~= nil and autoBuyToggle      then autoBuyToggle:Set(data.AutoBuy, true) end
-
-    if data.ItemFarm ~= nil then
-
-        setItemFarmState(data.ItemFarm == true)
-
-    end
-
-    print("[UA Killer Hub | Config] Конфігурацію відновлено.")
-
-    showNotification("Конфіг", "Налаштування завантажено!", 3)
-
-    return true
-
-end
-
--- =======================================================
-
--- ПОЕТАПНЕ АВТОЗАВАНТАЖЕННЯ (15с затримка + 1с між кроками)
-
--- =======================================================
-
-local AUTOLOAD_WAIT = 15
-
-local AUTOLOAD_STEP = 1.0
-
-local function runSteppedAutoLoad()
-
-    showNotification("Auto Load", string.format("Завантаження через %ds...", AUTOLOAD_WAIT), AUTOLOAD_WAIT - 1)
-
-    print(string.format("[UA Killer Hub | AutoLoad] Очікування %d секунд перед завантаженням конфігу...", AUTOLOAD_WAIT))
-
-    task.wait(AUTOLOAD_WAIT)
-
-    local data, errMsg = readConfigFromDisk()
-
-    if not data then
-
-        warn("[UA Killer Hub | AutoLoad] Не вдалося прочитати конфіг: " .. tostring(errMsg))
-
-        showNotification("Auto Load", "Помилка: конфіг не знайдено або пошкоджено", 4)
-
-        return
-
-    end
-
-    print("[UA Killer Hub | AutoLoad] Початок поетапного відновлення налаштувань...")
-
-    showNotification("Auto Load", "Відновлення налаштувань...", 3)
-
-    -- 1. Слайдери та фільтр предметів
-
-    if data.JumpPower      and jumpPowerSlider      then jumpPowerSlider:Set(data.JumpPower, true) end
-
-    if data.FlySpeed       and flySpeedSlider       then flySpeedSlider:Set(data.FlySpeed, true) end
-
-    if data.PickupDistance and pickupDistanceSlider then pickupDistanceSlider:Set(data.PickupDistance, true) end
-
-    if type(data.SelectedItems) == "table" then
-
-        for itemName, state in pairs(data.SelectedItems) do
-
-            if _G.SelectedItems[itemName] ~= nil then
-
-                _G.SelectedItems[itemName] = state
-
-                if itemToggleControls[itemName] then itemToggleControls[itemName]:Set(state, false) end
-
-            end
-
-        end
-
-        lastCacheRefresh = 0
-
-        print("[UA Killer Hub | AutoLoad] Слайдери та фільтр предметів відновлено.")
-
-    end
-
-    task.wait(AUTOLOAD_STEP)
-
-    local steps = {
-
-        {
-
-            key     = "ItemFarm",
-
-            control = itemFarmToggle,
-
-            label   = "Автофарм",
-
-            activate = function(val)
-
-                setItemFarmState(val == true)
-
-            end,
-
-        },
-
-        {
-
-            key     = "AutoSell",
-
-            control = autoSellToggle,
-
-            label   = "Автопродаж",
-
-            activate = function(val)
-
-                _G.AutoSell = (val == true)
-
-                if autoSellToggle then autoSellToggle:Set(_G.AutoSell, false) end
-
-                if _G.AutoSell then syncSellQueue() end
-
-            end,
-
-        },
-
-        {
-
-            key     = "AutoEventCandy",
-
-            control = autoCandyToggle,
-
-            label   = "Авто-здача конфет",
-
-            activate = function(val)
-
-                _G.AutoEventCandy = (val == true)
-
-                if autoCandyToggle then autoCandyToggle:Set(_G.AutoEventCandy, false) end
-
-            end,
-
-        },
-
-        {
-
-            key     = "AutoBuy",
-
-            control = autoBuyToggle,
-
-            label   = "Автокупівля",
-
-            activate = function(val)
-
-                _G.AutoBuy = (val == true)
-
-                if autoBuyToggle then autoBuyToggle:Set(_G.AutoBuy, false) end
-
-                if _G.AutoBuy then
-
-                    task.spawn(function()
-
-                        while _G.AutoBuy do
-
-                            local char   = player.Character
-
-                            local remote = char and char:FindFirstChild("RemoteEvent")
-
-                            if remote then remote:FireServer("PurchaseShopItem", { ItemName = "1x Lucky Arrow" }) end
-
-                            task.wait(2.5 + math.random() * 1.5)
-
-                        end
-
-                    end)
-
-                end
-
-            end,
-
-        },
-
-        {
-
-            key     = "ItemESP",
-
-            control = itemEspToggle,
-
-            label   = "ESP",
-
-            activate = function(val)
-
-                _G.ItemESP = (val == true)
-
-                if itemEspToggle then itemEspToggle:Set(_G.ItemESP, false) end
-
-            end,
-
-        },
-
-        {
-
-            key     = "AntiAFK",
-
-            control = antiAfkToggle,
-
-            label   = "Anti-AFK",
-
-            activate = function(val)
-
-                if antiAfkToggle then antiAfkToggle:Set((val == true), true) end
-
-            end,
-
-        },
-
-        {
-
-            key     = "StandaloneNoClip",
-
-            control = noclipToggle,
-
-            label   = "NoClip",
-
-            activate = function(val)
-
-                if noclipToggle then noclipToggle:Set((val == true), true) end
-
-            end,
-
-        },
-
-        {
-
-            key     = "AutoRespawn",
-
-            control = autoRespawnToggle,
-
-            label   = "Авто-респавн",
-
-            activate = function(val)
-
-                if autoRespawnToggle then autoRespawnToggle:Set((val == true), true) end
-
-            end,
-
-        },
-
-    }
-
-    local totalSteps = #steps
-
-    for i, step in ipairs(steps) do
-
-        if manuallyChanged[step.key] then
-
-            print(string.format("[UA Killer Hub | AutoLoad] Крок %d/%d — '%s' пропущено (ручна зміна гравцем).", i, totalSteps, step.label))
-
-            task.wait(AUTOLOAD_STEP)
-
-            continue
-
-        end
-
-        local savedVal = data[step.key]
-
-        if savedVal == true then
-
-            print(string.format("[UA Killer Hub | AutoLoad] Крок %d/%d — '%s' увімкнено.", i, totalSteps, step.label))
-
-            showNotification("Auto Load", string.format("(%d/%d) %s", i, totalSteps, step.label), AUTOLOAD_STEP + 0.5)
-
-            step.activate(true)
-
-        else
-
-            print(string.format("[UA Killer Hub | AutoLoad] Крок %d/%d — '%s' збережено як false, пропускаємо.", i, totalSteps, step.label))
-
-        end
-
-        task.wait(AUTOLOAD_STEP)
-
-    end
-
-    print("[UA Killer Hub | AutoLoad] Поетапне відновлення завершено.")
-
-    showNotification("Auto Load", "✓ Всі налаштування відновлено!", 4)
-
-end
-
--- =======================================================
-
 -- ВІДКРИТТЯ ІНТЕРФЕЙСУ
-
 -- =======================================================
-
 switchTab("Головна")
 
 print("[UA Killer Hub | Init] Інтерфейс відкрито та готовий до роботи!")
 
 if shouldAutoLoad then
-
     task.spawn(runSteppedAutoLoad)
-
 end
 
 showNotification("UA Killer Hub", "Завантажено успішно! (RightShift — сховати)", 4)
