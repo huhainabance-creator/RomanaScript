@@ -1,4 +1,7 @@
--- UA Killer Hub | YBA — Версія з повноцінною системою Shutdown Script
+-- ====================================================================
+-- UA Killer Hub | YBA — Ultimate Edition
+-- Швидкісний автофарм із Returner Bypass + 100с Snapshot AutoSell + Shutdown
+-- ====================================================================
 print("[UA Killer Hub | Init] Початок запуску скрипта...")
 
 if not game:IsLoaded() then
@@ -14,6 +17,7 @@ local VirtualUser = game:GetService("VirtualUser")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local UserInputService = game:GetService("UserInputService")
 local HttpService = game:GetService("HttpService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local player = Players.LocalPlayer
 while not player do
@@ -23,7 +27,7 @@ end
 print("[UA Killer Hub | Init] Гравець ідентифікований: " .. player.Name)
 
 -- =======================================================
--- СИСТЕМА УПРАВЛІННЯ ЖИТТЄВИМ ЦИКЛОМ СКРИПТА (SHUTDOWN)
+-- СИСТЕМА УПРАВЛІННЯ ЖИТТЄВИМ ЦИКЛОМ (SHUTDOWN)
 -- =======================================================
 local isShutdown = false
 local scriptConnections = {}
@@ -40,29 +44,46 @@ local configFile   = "UAKillerHub/YBA_Config.json"
 local shouldAutoLoad = false
 
 -- =======================================================
--- БЕЗПЕЧНА АКТИВАЦІЯ ITEM MAGNITUDE BYPASS
+-- БЕЗПЕЧНІ АНТИЧИТ-БАЙПАСИ (З 1.TXT)
 -- =======================================================
+local bypassSupported = false
+
+-- 1. Returner Bypass (захист від детекту телепортації та кіку сервером)
 pcall(function()
-    if hookmetamethod and newcclosure and checkcaller and getcallingscript then
-        local char = player.Character or player.CharacterAdded:Wait()
-        local primary = char:WaitForChild("HumanoidRootPart", 3) or char.PrimaryPart
-        if primary then
-            local OldIndexItem
-            OldIndexItem = hookmetamethod(primary.Position, "__index", newcclosure(function(self, Key)
-                if not checkcaller() and Key:lower() == "magnitude" and getcallingscript().Name == "ItemSpawn" then
-                    return 0
-                end
-                return OldIndexItem(self, Key)
-            end))
-            print("[UA Killer Hub | Init] Item Magnitude Bypass активовано.")
+    local RETURNER_KEY = "idklolbrah2de"
+    local RETURNER_RESPONSE = "  ___XP DE KEY"
+    local oldNamecall
+    oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+        if not checkcaller() and typeof(self) == "Instance" and self.Name == "Returner" and rawequal((...), RETURNER_KEY) then
+            return RETURNER_RESPONSE
         end
-    end
+        return oldNamecall(self, ...)
+    end))
+    bypassSupported = true
+    print("[UA Killer Hub | Bypass] Returner Teleport Bypass активовано.")
 end)
 
--- ====================================================
--- БЕЗПЕЧНИЙ CRASH & WALKSPEED BYPASS
--- ====================================================
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
+-- 2. Magnitude Bypass для ItemSpawn
+pcall(function()
+    local meta = getrawmetatable(Vector3.new())
+    if not meta then return end
+    setreadonly(meta, false)
+    local oldIndex = meta.__index
+    meta.__index = newcclosure(function(self, key)
+        if not checkcaller() and (key == "magnitude" or key == "Magnitude") then
+            local cs = getcallingscript()
+            if cs then
+                local name = typeof(cs) == "Instance" and (cs.Name or "") or tostring(cs)
+                if name == "ItemSpawn" then return 0 end
+            end
+        end
+        return oldIndex(self, key)
+    end)
+    setreadonly(meta, true)
+    print("[UA Killer Hub | Bypass] Vector3.Magnitude Bypass активовано.")
+end)
+
+-- 3. WalkSpeed та Crash Bypass
 pcall(function()
     local FunctionLibrary = require(
         ReplicatedStorage:WaitForChild("Modules", 2):WaitForChild("FunctionLibrary", 2)
@@ -75,10 +96,10 @@ pcall(function()
         end
         return OldPcall(...)
     end
-    print("[UA Killer Hub | Init] WalkSpeed/Crash Bypass активовано.")
+    print("[UA Killer Hub | Bypass] WalkSpeed/Crash Bypass активовано.")
 end)
 
--- Ініціалізація папки та флагу авто-завантаження
+-- Ініціалізація папки конфігурації
 pcall(function()
     if makefolder and not isfolder("UAKillerHub") then
         makefolder("UAKillerHub")
@@ -97,9 +118,9 @@ _G.AutoSell        = false
 _G.AutoEventCandy  = false
 _G.AutoBuy         = false
 _G.ItemFarm        = false
+_G.InstantTeleport = true -- Миттєвий телепорт на предмет (з 1.txt)
 _G.ItemESP         = false
-_G.FlySpeed        = 150
-_G.PickupDistance  = 3.5
+_G.FlySpeed        = 220
 _G.AntiAFK         = false
 _G.StandaloneNoClip= false
 _G.AutoRespawn     = true
@@ -130,15 +151,22 @@ _G.SelectedItems = {
     ["Zeppeli's Hat"] = false,
 }
 
+local SAFE_ZONE = Vector3.new(-212.241150, -33.486183, -283.842651)
+local FARM_PRIORITY = {
+    ["Lucky Arrow"] = true,
+    ["Lucky Stone Mask"] = true,
+    ["Christmas Present"] = true,
+}
+
 -- =======================================================
--- МОДУЛЬ ITEMFARM (ОНОВЛЕНИЙ ТА ОПТИМІЗОВАНИЙ)
+-- МОДУЛЬ ВІДСТЕЖЕННЯ ТА ЗБОРУ ПРЕДМЕТІВ (HIGH PERFORMANCE)
 -- =======================================================
+local Tracked            = {}
+local TrackedRev         = {}
+local Pending            = {}
 local bannedCoordinates  = {}
 local failedItemAttempts = {}
 local espObjects         = {}
-local itemCache          = {}
-local lastCacheRefresh   = 0
-local CACHE_REFRESH_INTERVAL = 1.25
 local BAN_TTL            = 30
 
 local farmThreadActive   = false
@@ -167,15 +195,120 @@ local function setFarmStatus(text)
     farmStatusText = text
 end
 
-local function isInvalidItemPart(obj)
-    if not obj then return true end
-    local current = obj
-    while current and current ~= workspace do
-        if current:IsA("Backpack") then return true end
-        if current:IsA("Model") and current:FindFirstChildOfClass("Humanoid") then return true end
-        current = current.Parent
+local function getCharacter()
+    local char = player.Character
+    if not char or not char:IsDescendantOf(workspace) then
+        return nil, nil, nil
+    end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    return char, hrp, hum
+end
+
+local function zeroHrpVelocity(hrp)
+    if not hrp then return end
+    pcall(function()
+        hrp.AssemblyLinearVelocity  = Vector3.zero
+        hrp.AssemblyAngularVelocity = Vector3.zero
+    end)
+end
+
+local function cleanupFlight()
+    if not flightState then return end
+    if flightState.tween then pcall(function() flightState.tween:Cancel() end) end
+    if flightState.heartbeatConn then pcall(function() flightState.heartbeatConn:Disconnect() end) end
+    if flightState.anchor and flightState.anchor.Parent then pcall(function() flightState.anchor:Destroy() end) end
+    flightState = nil
+
+    local char, hrp = getCharacter()
+    if hrp then zeroHrpVelocity(hrp) end
+    if char and not _G.StandaloneNoClip and not _G.ItemFarm then
+        for _, part in ipairs(char:GetDescendants()) do
+            if part:IsA("BasePart") then part.CanCollide = true end
+        end
+    end
+end
+
+local function stopFlight()
+    cleanupFlight()
+    if noclipConnection and not _G.StandaloneNoClip and not _G.ItemFarm then
+        pcall(function() noclipConnection:Disconnect() end)
+        noclipConnection = nil
+    end
+end
+
+local function ensureNoClip()
+    if noclipConnection or isShutdown then return end
+    noclipConnection = RunService.Stepped:Connect(function()
+        if isShutdown or (not _G.ItemFarm and not _G.StandaloneNoClip) then
+            if noclipConnection and isShutdown then
+                pcall(function() noclipConnection:Disconnect() end)
+                noclipConnection = nil
+            end
+            return
+        end
+        local char = player.Character
+        if not char then return end
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        for _, part in ipairs(char:GetDescendants()) do
+            if part:IsA("BasePart") and part ~= hrp then
+                part.CanCollide = false
+            end
+        end
+    end)
+end
+
+-- Перевірка чи належить предмет інвентарю гравця
+local function isPlayerOwned(part)
+    if not part or not part.Parent then return true end
+    for _, plr in ipairs(Players:GetPlayers()) do
+        local c = plr.Character
+        local b = plr:FindFirstChild("Backpack")
+        if (c and part:IsDescendantOf(c)) or (b and part:IsDescendantOf(b)) then
+            return true
+        end
     end
     return false
+end
+
+local function getBasePart(obj)
+    if not obj or not obj.Parent then return nil end
+    if obj:IsA("BasePart") then return obj end
+    if obj.Parent:IsA("BasePart") then return obj.Parent end
+    return obj.Parent:FindFirstChildWhichIsA("BasePart", true)
+        or (obj.Parent.Parent and obj.Parent.Parent:FindFirstChildWhichIsA("BasePart", true))
+end
+
+local function isValidPosition(part)
+    if not part or not part:IsDescendantOf(workspace) then return false end
+    local p = part.Position
+    return not (math.abs(p.X) < 1 and math.abs(p.Y) < 1 and math.abs(p.Z) < 1)
+end
+
+local function isPartInvisible(part)
+    if not part or not part.Parent or not part:IsDescendantOf(workspace) then return true end
+    if part.Transparency >= 1 then return true end
+    if part.LocalTransparencyModifier >= 1 then return true end
+    return false
+end
+
+local function isSpawnedItemPrompt(obj)
+    if not obj or (obj.ObjectText or "") == "" then return false end
+    local spawns = workspace:FindFirstChild("Item_Spawns")
+    local folder = spawns and spawns:FindFirstChild("Items")
+    return folder ~= nil and obj:IsDescendantOf(folder)
+end
+
+local function anyItemSelected()
+    for _, v in pairs(_G.SelectedItems) do
+        if v then return true end
+    end
+    return false
+end
+
+local function shouldFarmItem(itemName)
+    if not anyItemSelected() then return true end
+    return _G.SelectedItems[itemName] == true
 end
 
 local function cleanupBannedCoordinates()
@@ -214,122 +347,14 @@ local function banFailedItem(item, reason)
         reason = reason or "failed_pickup",
         name = itemName,
     })
-
-    warn(string.format("[UA Killer Hub | Blacklist] Об'єкт тимчасово заблоковано на %ds: [%s | Instance: %s] на позиції (%.1f, %.1f, %.1f) | Причина: %s",
-        BAN_TTL, itemName, tostring(partInstance), pos.X, pos.Y, pos.Z, tostring(reason)))
 end
 
-local function resolveItemFromPrompt(desc)
-    if not desc or not desc:IsA("ProximityPrompt") or not desc.Parent then return nil end
-
-    local parent   = desc.Parent
-    local model    = parent:IsA("Model") and parent or parent.Parent
-    local itemName = ""
-
-    if _G.SelectedItems[parent.Name] ~= nil then
-        itemName = parent.Name
-    elseif model and _G.SelectedItems[model.Name] ~= nil then
-        itemName = model.Name
-    elseif desc.ObjectText and _G.SelectedItems[desc.ObjectText] ~= nil then
-        itemName = desc.ObjectText
-    end
-
-    if itemName == "" then return nil end
-
-    local targetPart = parent:IsA("BasePart") and parent
-        or parent:FindFirstChildWhichIsA("BasePart")
-        or (model and model:FindFirstChildWhichIsA("BasePart"))
-
-    if not targetPart or targetPart.Transparency >= 1 then return nil end
-    if isCoordinateBanned(targetPart.Position, targetPart) or isInvalidItemPart(targetPart) then return nil end
-    if not desc.Enabled then return nil end
-
-    return {
-        prompt   = desc,
-        part     = targetPart,
-        parent   = parent,
-        name     = itemName,
-        position = targetPart.Position,
-    }
-end
-
-local function anyItemSelected()
-    for _, v in pairs(_G.SelectedItems) do
-        if v then return true end
-    end
-    return false
-end
-
-local function shouldFarmItem(itemName)
-    if not anyItemSelected() then return true end
-    return _G.SelectedItems[itemName] == true
-end
-
-local function pruneItemCache()
-    for i = #itemCache, 1, -1 do
-        local it = itemCache[i]
-        if not it or not it.part or not it.part:IsDescendantOf(workspace)
-           or not it.prompt or not it.prompt:IsDescendantOf(workspace)
-           or isInvalidItemPart(it.parent)
-           or isCoordinateBanned(it.position, it.part) then
-            table.remove(itemCache, i)
-        end
-    end
-end
-
-local function refreshItemCache(force)
-    local now = tick()
-    if not force and (now - lastCacheRefresh < CACHE_REFRESH_INTERVAL) then
-        pruneItemCache()
-        return itemCache
-    end
-
-    lastCacheRefresh = now
-    table.clear(itemCache)
-
-    local t0 = os.clock()
-    local promptCount = 0
-    local validCount = 0
-
-    local descendants = workspace:GetDescendants()
-    for _, desc in ipairs(descendants) do
-        if desc:IsA("ProximityPrompt") then
-            promptCount = promptCount + 1
-            local item = resolveItemFromPrompt(desc)
-            if item and shouldFarmItem(item.name) then
-                table.insert(itemCache, item)
-                validCount = validCount + 1
-            end
-        end
-    end
-
-    local elapsed = os.clock() - t0
-    if elapsed > 0.03 or validCount > 0 then
-        print(string.format("[UA Killer Hub | Cache] Оновлення: знайдено %d валідних предметів (перевірено %d prompt) за %.4f с",
-            validCount, promptCount, elapsed))
-    end
-
-    return itemCache
-end
-
-local function getNearestItem(hrp)
-    local nearest, shortest = nil, math.huge
-    for _, item in ipairs(refreshItemCache()) do
-        if item.prompt:IsDescendantOf(workspace) and item.part:IsDescendantOf(workspace) and not isInvalidItemPart(item.parent) then
-            local dist = (hrp.Position - item.position).Magnitude
-            if dist < shortest then
-                shortest = dist
-                nearest  = item
-            end
-        end
-    end
-    return nearest, shortest
-end
-
+-- ====================
+-- ESP ПРЕДМЕТІВ
+-- ====================
 local function applyESP(part, name)
-    if isShutdown then return end
-    if espObjects[part] then return end
-    if not part or part.Transparency == 1 or isCoordinateBanned(part.Position) or isInvalidItemPart(part) then return end
+    if isShutdown or not part or espObjects[part] then return end
+    if isPartInvisible(part) or isCoordinateBanned(part.Position) or isPlayerOwned(part) then return end
 
     local bgui = Instance.new("BillboardGui")
     bgui.Name        = "YBA_Item_ESP"
@@ -359,219 +384,329 @@ local function clearESP()
     table.clear(espObjects)
 end
 
-local function getCharacter()
-    local char = player.Character
-    if not char or not char:IsDescendantOf(workspace) then
-        return nil, nil, nil
+-- Реєстрація та дереєстрація спавну предметів у пам'яті
+local function unregisterItem(part)
+    if not part then return end
+    if Tracked[part] then Tracked[part] = nil end
+    for obj, mapped in pairs(TrackedRev) do
+        if mapped == part then TrackedRev[obj] = nil end
     end
-    local hrp = char:FindFirstChild("HumanoidRootPart")
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    return char, hrp, hum
+    for i = #Pending, 1, -1 do
+        if Pending[i] and Pending[i].part == part then
+            table.remove(Pending, i)
+        end
+    end
+    if espObjects[part] then
+        pcall(function() espObjects[part]:Destroy() end)
+        espObjects[part] = nil
+    end
 end
 
-local function zeroHrpVelocity(hrp)
-    if not hrp then return end
-    pcall(function()
-        hrp.AssemblyLinearVelocity  = Vector3.zero
-        hrp.AssemblyAngularVelocity = Vector3.zero
-    end)
+local function registerItem(obj)
+    if isShutdown or not obj then return end
+    if TrackedRev[obj] then return end
+
+    local name, part = nil, nil
+    if obj:IsA("ProximityPrompt") then
+        local text = obj.ObjectText or ""
+        if _G.SelectedItems[text] ~= nil or isSpawnedItemPrompt(obj) then
+            name = text ~= "" and text or (obj.Parent and obj.Parent.Name)
+            part = getBasePart(obj)
+        end
+    elseif obj:IsA("BasePart") then
+        if _G.SelectedItems[obj.Name] ~= nil then
+            name = obj.Name
+            part = obj
+        end
+    end
+
+    if not name or not part or isPlayerOwned(part) then return end
+    if Tracked[part] then
+        TrackedRev[obj] = part
+        return
+    end
+
+    if not isValidPosition(part) then
+        table.insert(Pending, { obj = obj, part = part, name = name })
+        return
+    end
+
+    Tracked[part] = { Name = name, Obj = obj }
+    TrackedRev[obj] = part
+
+    if _G.ItemESP and not isPartInvisible(part) then
+        applyESP(part, name)
+    end
 end
 
-local function cleanupFlight()
-    if not flightState then return end
-    if flightState.tween then pcall(function() flightState.tween:Cancel() end) end
-    if flightState.heartbeatConn then pcall(function() flightState.heartbeatConn:Disconnect() end) end
-    if flightState.cframeValue then pcall(function() flightState.cframeValue:Destroy() end) end
-    flightState = nil
+local function scanAllItems()
+    for _, o in ipairs(workspace:GetDescendants()) do
+        if isShutdown then break end
+        if o:IsA("ProximityPrompt") or o:IsA("BasePart") then
+            registerItem(o)
+        end
+    end
+end
 
+-- Моніторинг спавну в реальному часі (з 1.txt)
+trackConnection(workspace.DescendantAdded:Connect(function(o)
+    if isShutdown or not o or not o.Parent then return end
+    if o:IsA("ProximityPrompt") then
+        registerItem(o)
+        if (o.ObjectText or "") == "" then
+            local conn
+            conn = o:GetPropertyChangedSignal("ObjectText"):Connect(function()
+                if isShutdown or not o.Parent then
+                    if conn then conn:Disconnect() end
+                    return
+                end
+                if (o.ObjectText or "") ~= "" then
+                    registerItem(o)
+                    if conn then conn:Disconnect() end
+                end
+            end)
+            trackConnection(conn)
+        end
+    elseif o:IsA("BasePart") then
+        registerItem(o)
+    end
+end))
+
+trackConnection(workspace.DescendantRemoving:Connect(function(o)
+    if isShutdown or not o then return end
+    if o:IsA("BasePart") and Tracked[o] then
+        unregisterItem(o)
+    elseif TrackedRev[o] then
+        unregisterItem(TrackedRev[o])
+    end
+end))
+
+-- Пошук найближчого предмета з урахуванням пріоритетів
+local function getNearestFarmItem(hrp)
+    if not hrp then return nil, nil, nil end
+    local origin = hrp.Position
+    local nearest, nearestPart, nearestData, nearestDist = nil, nil, nil, math.huge
+    local prioItem, prioPart, prioData, prioDist = nil, nil, nil, math.huge
+
+    for part, data in pairs(Tracked) do
+        if part and part.Parent and part:IsDescendantOf(workspace)
+            and isValidPosition(part)
+            and not isPlayerOwned(part)
+            and not isPartInvisible(part)
+            and not isCoordinateBanned(part.Position, part)
+            and shouldFarmItem(data.Name) then
+
+            local dist = (part.Position - origin).Magnitude
+            local candidate = part:FindFirstAncestorOfClass("Model") or part
+
+            if dist < nearestDist then
+                nearestDist = dist
+                nearest = candidate
+                nearestPart = part
+                nearestData = data
+            end
+
+            if FARM_PRIORITY[data.Name] and dist < prioDist then
+                prioDist = dist
+                prioItem = candidate
+                prioPart = part
+                prioData = data
+            end
+        end
+    end
+
+    if prioItem then
+        return prioItem, prioPart, prioData, prioDist
+    end
+    return nearest, nearestPart, nearestData, nearestDist
+end
+
+-- ====================
+-- РУХ: FLY ТА INSTANT TELEPORT
+-- ====================
+local function flyToCFrame(targetCF, speed, shouldContinue)
+    speed = math.clamp(tonumber(speed) or _G.FlySpeed or 220, 20, 500)
     local char, hrp = getCharacter()
-    if hrp then zeroHrpVelocity(hrp) end
-    if char and not _G.StandaloneNoClip and not _G.ItemFarm then
-        for _, part in ipairs(char:GetDescendants()) do
-            if part:IsA("BasePart") then
-                part.CanCollide = true
-            end
-        end
-    end
-end
+    if not hrp or not hrp.Parent then return false end
 
-local function stopFlight()
-    cleanupFlight()
-    if noclipConnection and not _G.StandaloneNoClip and not _G.ItemFarm then
-        pcall(function() noclipConnection:Disconnect() end)
-        noclipConnection = nil
-    end
-    pcall(function()
-        for _, obj in ipairs(player:GetChildren()) do
-            if obj.Name == "YBA_VirtualCFrame" then obj:Destroy() end
-        end
-    end)
-end
-
-local function ensureNoClip()
-    if noclipConnection or isShutdown then return end
-    noclipConnection = RunService.Stepped:Connect(function()
-        if isShutdown or (not _G.ItemFarm and not _G.StandaloneNoClip) then
-            if noclipConnection and isShutdown then
-                pcall(function() noclipConnection:Disconnect() end)
-                noclipConnection = nil
-            end
-            return
-        end
-        local char = player.Character
-        if not char then return end
-        local hrp = char:FindFirstChild("HumanoidRootPart")
-        for _, part in ipairs(char:GetDescendants()) do
-            if part:IsA("BasePart") and part ~= hrp then
-                part.CanCollide = false
-            end
-        end
-    end)
-end
-
-local function moveToItemAndPickup(item)
-    if isShutdown then return false end
-    if not item or not item.part or not item.part:IsDescendantOf(workspace) then return false end
-    if not item.prompt or not item.prompt:IsDescendantOf(workspace) then return false end
-    if isInvalidItemPart(item.parent) then return false end
-
-    local char, hrp = getCharacter()
-    if not hrp then
-        warn("[UA Killer Hub | ItemFarm] Рух скасовано: персонаж або HumanoidRootPart відсутній на старті")
-        return false
+    local distance = (targetCF.Position - hrp.Position).Magnitude
+    if distance <= 0.5 then
+        hrp.CFrame = targetCF
+        zeroHrpVelocity(hrp)
+        return true
     end
 
     cleanupFlight()
 
-    local cframeValue = Instance.new("CFrameValue")
-    cframeValue.Name   = "YBA_VirtualCFrame"
-    cframeValue.Value  = hrp.CFrame
-    cframeValue.Parent = player
+    local anchor = Instance.new("Part")
+    anchor.Name = "UAKillerHub_FlyAnchor"
+    anchor.Anchored = true
+    anchor.CanCollide = false
+    anchor.CanTouch = false
+    anchor.CanQuery = false
+    anchor.Transparency = 1
+    anchor.Size = Vector3.one
+    anchor.CFrame = hrp.CFrame
+    anchor.Parent = workspace
 
-    local targetCFrame = CFrame.new(item.part.Position + Vector3.new(0, 1.2, 0))
-    local distance     = (targetCFrame.Position - hrp.Position).Magnitude
-    local speed        = math.max(_G.FlySpeed or 150, 20)
-    local tweenTime    = math.max(distance / speed, 0.05)
+    local duration = math.max(distance / speed, 0.05)
+    local tween = TweenService:Create(anchor, TweenInfo.new(duration, Enum.EasingStyle.Linear), { CFrame = targetCF })
 
-    local tween = TweenService:Create(cframeValue, TweenInfo.new(tweenTime, Enum.EasingStyle.Linear), { Value = targetCFrame })
-
+    local cancelled = false
     local heartbeatConn
     heartbeatConn = RunService.Heartbeat:Connect(function()
-        if isShutdown then
-            if heartbeatConn then heartbeatConn:Disconnect() end
+        if isShutdown or cancelled then return end
+        if not anchor.Parent or not hrp.Parent or player.Character ~= char then
+            cancelled = true
+            pcall(function() tween:Cancel() end)
             return
         end
-        if not char or not char.Parent then return end
-        local currentHrp = char:FindFirstChild("HumanoidRootPart")
-        if not currentHrp or not cframeValue.Parent then return end
-        currentHrp.CFrame = cframeValue.Value
-        zeroHrpVelocity(currentHrp)
-        for _, part in ipairs(char:GetDescendants()) do
-            if part:IsA("BasePart") and part ~= currentHrp then
-                part.CanCollide = false
+
+        hrp.CFrame = anchor.CFrame
+        zeroHrpVelocity(hrp)
+        for _, p in ipairs(char:GetDescendants()) do
+            if p:IsA("BasePart") and p ~= hrp then p.CanCollide = false end
+        end
+
+        if shouldContinue then
+            local ok, keepGoing = pcall(shouldContinue)
+            if not ok or not keepGoing then
+                cancelled = true
+                pcall(function() tween:Cancel() end)
             end
         end
     end)
 
-    flightState = { cframeValue = cframeValue, tween = tween, heartbeatConn = heartbeatConn }
+    flightState = { tween = tween, heartbeatConn = heartbeatConn, anchor = anchor }
 
-    local function shouldContinue()
-        return not isShutdown
-            and _G.ItemFarm
-            and item.part:IsDescendantOf(workspace)
-            and not isInvalidItemPart(item.part)
-            and item.prompt:IsDescendantOf(workspace)
-    end
-
-    tween:Play()
     local finished = false
     local tweenCompletedConn
     tweenCompletedConn = tween.Completed:Once(function() finished = true end)
 
-    local flightTimeout = tick() + tweenTime + 2.0
-    while not finished do
-        if isShutdown or not shouldContinue() or not hrp or not hrp.Parent or tick() > flightTimeout then
-            if tweenCompletedConn then tweenCompletedConn:Disconnect() end
-            cleanupFlight()
-            return false
-        end
+    tween:Play()
+    local flightTimeout = tick() + duration + 2.0
+    while not finished and not cancelled and not isShutdown do
+        if tick() > flightTimeout then break end
         RunService.Heartbeat:Wait()
     end
 
-    if not shouldContinue() or isShutdown then cleanupFlight() return false end
-
-    targetCFrame      = CFrame.new(item.part.Position + Vector3.new(0, 1.2, 0))
-    cframeValue.Value = targetCFrame
-    local currentHrp  = char:FindFirstChild("HumanoidRootPart")
-    if currentHrp then
-        currentHrp.CFrame = targetCFrame
-        zeroHrpVelocity(currentHrp)
-    end
-
-    task.wait(0.04)
-
-    if not shouldContinue() or isShutdown then cleanupFlight() return false end
-
-    local backpack = player:FindFirstChild("Backpack")
-    local initialBackpackCount = backpack and #backpack:GetChildren() or 0
-    local initialCharTools = 0
-    if char then
-        for _, obj in ipairs(char:GetChildren()) do
-            if obj:IsA("Tool") then initialCharTools = initialCharTools + 1 end
-        end
-    end
-    local initialTotalTools = initialBackpackCount + initialCharTools
-
-    item.prompt.RequiresLineOfSight = false
-    item.prompt.HoldDuration        = 0
-
-    local requestTime = os.clock()
-    if fireproximityprompt and not isShutdown then
-        fireproximityprompt(item.prompt, 0)
-    end
-
-    local confirmed = false
-    local maxWait = 0.75
-    local checkStart = os.clock()
-
-    while (os.clock() - checkStart) < maxWait do
-        if isShutdown then break end
-        if not item.prompt:IsDescendantOf(workspace) or not item.part:IsDescendantOf(workspace) or isInvalidItemPart(item.parent) then
-            confirmed = true
-            break
-        end
-        if not item.prompt.Enabled then
-            confirmed = true
-            break
-        end
-        local curBackpack = backpack and #backpack:GetChildren() or 0
-        local curCharTools = 0
-        if char then
-            for _, obj in ipairs(char:GetChildren()) do
-                if obj:IsA("Tool") then curCharTools = curCharTools + 1 end
-            end
-        end
-        if (curBackpack + curCharTools) > initialTotalTools then
-            confirmed = true
-            break
-        end
-        task.wait(0.04)
-    end
-
-    local latency = os.clock() - requestTime
+    if tweenCompletedConn then tweenCompletedConn:Disconnect() end
     cleanupFlight()
 
-    if isShutdown then return false end
-
-    if confirmed then
-        print(string.format("[UA Killer Hub | ItemFarm] Підтверджено підбір [%s] за %.3f с (Instance: %s)",
-            item.name, latency, tostring(item.part)))
+    if not cancelled and not isShutdown and hrp.Parent then
+        hrp.CFrame = targetCF
+        zeroHrpVelocity(hrp)
         return true
-    else
-        warn(string.format("[UA Killer Hub | ItemFarm] Підбір [%s] не підтверджено сервером за %.3f с (Instance: %s)",
-            item.name, latency, tostring(item.part)))
+    end
+    return false
+end
+
+local function teleportToPart(targetPart)
+    if not targetPart or not targetPart.Parent or not targetPart:IsDescendantOf(workspace) then return false end
+    local _, hrp = getCharacter()
+    if not hrp then return false end
+
+    local targetCF = CFrame.new(targetPart.Position + Vector3.new(0, 3, 0))
+    hrp.CFrame = targetCF
+    zeroHrpVelocity(hrp)
+    return true
+end
+
+-- ====================
+-- АКТИВАЦІЯ PROXIMITY PROMPT
+-- ====================
+local function triggerPickupPrompt(prompt)
+    if isShutdown or not prompt or not prompt.Parent or not prompt:IsA("ProximityPrompt") or not prompt.Enabled then
         return false
     end
+
+    local oldHoldDuration = prompt.HoldDuration
+    pcall(function() prompt.HoldDuration = 0 end)
+
+    local fired = false
+    if bypassSupported and type(fireproximityprompt) == "function" then
+        local ok = pcall(function() fireproximityprompt(prompt, 0, true) end)
+        if not ok then ok = pcall(function() fireproximityprompt(prompt) end) end
+        fired = ok
+    end
+
+    if not fired and type(fireproximityprompt) == "function" then
+        local ok = pcall(function() fireproximityprompt(prompt, 0) end)
+        fired = ok
+    end
+
+    pcall(function()
+        if oldHoldDuration ~= nil and prompt.Parent then
+            prompt.HoldDuration = oldHoldDuration
+        end
+    end)
+    return fired
+end
+
+local function farmItem(model, part, trackedData)
+    if isShutdown or not part or not part.Parent or not part:IsDescendantOf(workspace) then
+        if part then unregisterItem(part) end
+        return false
+    end
+
+    local char, hrp = getCharacter()
+    if not hrp then return false end
+
+    local function findPrompt()
+        if trackedData and trackedData.Obj and trackedData.Obj.Parent and trackedData.Obj:IsA("ProximityPrompt") then
+            return trackedData.Obj
+        end
+        local prompt = model and model:FindFirstChildWhichIsA("ProximityPrompt", true)
+            or (part and part:FindFirstChildWhichIsA("ProximityPrompt", true))
+        return prompt
+    end
+
+    local isInstant = _G.InstantTeleport and bypassSupported
+    local arrived = false
+
+    if isInstant then
+        teleportToPart(part)
+        local arriveStart = os.clock()
+        while os.clock() - arriveStart < 0.5 and not isShutdown and _G.ItemFarm do
+            if not part.Parent or not part:IsDescendantOf(workspace) then break end
+            teleportToPart(part)
+            if (hrp.Position - (part.Position + Vector3.new(0, 3, 0))).Magnitude < 1.0 then
+                arrived = true
+                break
+            end
+            RunService.Heartbeat:Wait()
+        end
+    else
+        local targetCF = CFrame.new(part.Position + Vector3.new(0, 3, 0))
+        arrived = flyToCFrame(targetCF, _G.FlySpeed, function()
+            return _G.ItemFarm and not isShutdown and part.Parent ~= nil and part:IsDescendantOf(workspace)
+        end)
+    end
+
+    if isShutdown or not _G.ItemFarm then return false end
+    if not part.Parent or not part:IsDescendantOf(workspace) then
+        unregisterItem(part)
+        return true
+    end
+
+    local prompt = findPrompt()
+    if prompt and prompt.Parent and prompt.Enabled then
+        for attempt = 1, 3 do
+            if isShutdown or not _G.ItemFarm or not part.Parent or not part:IsDescendantOf(workspace) then break end
+            triggerPickupPrompt(prompt)
+            task.wait(0.12)
+            if not part.Parent or not part:IsDescendantOf(workspace) or not prompt.Parent or not prompt.Enabled then
+                unregisterItem(part)
+                return true
+            end
+        end
+    end
+
+    if not part.Parent or not part:IsDescendantOf(workspace) then
+        unregisterItem(part)
+        return true
+    end
+    return false
 end
 
 local function tryRespawn()
@@ -581,14 +716,7 @@ local function tryRespawn()
         local remotesFolder = ReplicatedStorage:FindFirstChild("Remotes")
         local remote = remotesFolder and remotesFolder:FindFirstChild("LoadCharacter")
         if remote then
-            local ok, err = pcall(function() remote:FireServer() end)
-            if ok then
-                print("[UA Killer Hub | Respawn] Відправлено запит LoadCharacter для респавну.")
-            else
-                warn("[UA Killer Hub | Respawn] Помилка виклику LoadCharacter: " .. tostring(err))
-            end
-        else
-            warn("[UA Killer Hub | Respawn] Remote LoadCharacter не знайдено в ReplicatedStorage.Remotes.")
+            pcall(function() remote:FireServer() end)
         end
     end
 end
@@ -615,40 +743,34 @@ local function startFarmThread()
                 task.wait(0.5)
                 continue
             end
-            local targetItem = getNearestItem(hrp)
-            if not targetItem then
-                setFarmStatus("Предметів не знайдено")
-                task.wait(0.35)
+
+            local item, part, data = getNearestFarmItem(hrp)
+            if not item or not part then
+                setFarmStatus("Очікування появи предметів...")
+                task.wait(0.25)
                 continue
             end
 
-            setFarmStatus("Лечу до: " .. targetItem.name)
-            local itemPart = targetItem.part
-            local success = moveToItemAndPickup(targetItem)
+            setFarmStatus("Збір: " .. tostring(data and data.Name or "Item"))
+            local success = farmItem(item, part, data)
 
             if isShutdown then break end
 
-            if success then
-                failedItemAttempts[itemPart] = nil
-                if espObjects[itemPart] then
-                    pcall(function() espObjects[itemPart]:Destroy() end)
-                    espObjects[itemPart] = nil
-                end
-                lastCacheRefresh = 0
-            else
-                local attempts = (failedItemAttempts[itemPart] or 0) + 1
-                failedItemAttempts[itemPart] = attempts
+            if not success and part and part.Parent then
+                local attempts = (failedItemAttempts[part] or 0) + 1
+                failedItemAttempts[part] = attempts
                 if attempts >= 2 then
-                    banFailedItem(targetItem, "2_failed_attempts")
-                    failedItemAttempts[itemPart] = nil
-                    lastCacheRefresh = 0
+                    banFailedItem({ part = part, position = part.Position, name = data and data.Name }, "failed_pickup")
+                    unregisterItem(part)
+                    failedItemAttempts[part] = nil
                 else
-                    warn(string.format("[UA Killer Hub | ItemFarm] Спроба %d/2 для [%s] неуспішна, наступна спроба пізніше",
-                        attempts, targetItem.name))
-                    task.wait(0.15)
+                    task.wait(0.1)
                 end
+            else
+                failedItemAttempts[part] = nil
             end
-            task.wait(0.08)
+
+            task.wait(0.04)
         end
 
         if farmSessionId == currentSession then
@@ -676,10 +798,8 @@ local function setItemFarmState(enabled)
         stopFlight()
     end
 
-    print(string.format("[UA Killer Hub | Farm] Стан синхронізовано: _G.ItemFarm=%s, farmThreadActive=%s, GUI=%s",
-        tostring(_G.ItemFarm),
-        tostring(farmThreadActive),
-        tostring(itemFarmToggle and itemFarmToggle:Get())))
+    print(string.format("[UA Killer Hub | Farm] Стан синхронізовано: _G.ItemFarm=%s, farmThreadActive=%s",
+        tostring(_G.ItemFarm), tostring(farmThreadActive)))
 end
 
 -- =======================================================
@@ -864,7 +984,7 @@ end
 local autoSellToggle       = nil
 local autoSellThreadActive = false
 local autoSellSessionId    = 0
-local FARM_CYCLE_DURATION  = 100 -- 100 секунд фарму перед продажем
+local FARM_CYCLE_DURATION  = 100 -- 100 секунд фарму перед кожним продажем
 
 local function getSellableSnapshot()
     local snapshot = {}
@@ -1186,6 +1306,23 @@ task.spawn(function()
     end
 end)
 
+-- Фоновий резолв об'єктів у черзі Pending
+task.spawn(function()
+    while not isShutdown do
+        task.wait(0.5)
+        if isShutdown then break end
+        for i = #Pending, 1, -1 do
+            local e = Pending[i]
+            if e and e.obj and e.obj:IsDescendantOf(game) and isValidPosition(e.part) then
+                table.remove(Pending, i)
+                if not Tracked[e.part] then registerItem(e.obj) end
+            elseif not e or not e.obj or not e.obj:IsDescendantOf(game) then
+                table.remove(Pending, i)
+            end
+        end
+    end
+end)
+
 local function applyJumpPower()
     if isShutdown then return end
     local _, _, hum = getCharacter()
@@ -1218,9 +1355,11 @@ task.spawn(function()
                     espObjects[part] = nil
                 end
             end
-            for _, item in ipairs(refreshItemCache()) do
+            for part, data in pairs(Tracked) do
                 if isShutdown or not _G.ItemESP then break end
-                applyESP(item.part, item.name)
+                if part and part.Parent and isValidPosition(part) and not isPartInvisible(part) and not isPlayerOwned(part) then
+                    applyESP(part, data.Name)
+                end
             end
         else
             clearESP()
@@ -1379,18 +1518,18 @@ local function shutdownScript()
     _G.StandaloneNoClip = false
     _G.AutoRespawn      = false
 
-    -- 2. Збільшення Session ID та скидання прапорців активності для обриву фонових циклів
+    -- 2. Збільшення Session ID та обрив активних циклів
     farmSessionId        = farmSessionId + 1
     farmThreadActive     = false
     autoSellSessionId    = autoSellSessionId + 1
     autoSellThreadActive = false
     isBusy               = false
 
-    -- 3. Зупинка польотів, Tween та скидання інерції
+    -- 3. Зупинка руху та польотів
     pcall(stopFlight)
     pcall(cleanupFlight)
 
-    -- 4. Очищення ESP та закриття відкритих діалогів
+    -- 4. Очищення ESP та діалогів
     pcall(clearESP)
     pcall(closeMerchantDialogue)
 
@@ -1404,7 +1543,7 @@ local function shutdownScript()
         antiAfkConnection = nil
     end
 
-    -- 6. Відключення всіх збережених Connections скрипта
+    -- 6. Відключення всіх збережених з'єднань скрипта
     for _, conn in ipairs(scriptConnections) do
         pcall(function()
             if conn and conn.Connected then
@@ -1435,23 +1574,14 @@ local function shutdownScript()
         end
     end)
 
-    -- 8. Очищення службових об'єктів у гравцеві
-    pcall(function()
-        for _, obj in ipairs(player:GetChildren()) do
-            if obj.Name == "YBA_VirtualCFrame" then
-                obj:Destroy()
-            end
-        end
-    end)
-
-    -- 9. Знищення інтерфейсу
+    -- 8. Знищення інтерфейсу
     pcall(function()
         if ScreenGui then
             ScreenGui:Destroy()
         end
     end)
 
-    print("[UA Killer Hub] Скрипт успішно та повністю вимкнено. Усі процеси завершено.")
+    print("[UA Killer Hub] Скрипт успішно та повністю вимкнено.")
 end
 
 -- Верхня панель
@@ -1553,12 +1683,12 @@ MinBtn.MouseButton1Click:Connect(function()
     TweenService:Create(MainFrame, TweenInfo.new(0.25, Enum.EasingStyle.Quad), { Size = targetSize }):Play()
 end)
 
--- Натискання на ✕ ПОВНІСТЮ ВИМИКАЄ СКРИПТ
+-- Повне вимкнення при натисканні ✕
 CloseBtn.MouseButton1Click:Connect(function()
     shutdownScript()
 end)
 
--- Перемикання видимості через RightShift (працює тільки до Shutdown)
+-- Приховати / показати через RightShift
 trackConnection(UserInputService.InputBegan:Connect(function(input, gpe)
     if isShutdown then return end
     if not gpe and input.KeyCode == Enum.KeyCode.RightShift then
@@ -1776,6 +1906,7 @@ local function createToggle(page, tabName, text, defaultVal, callback)
         Page  = tabName,
         Frame = card,
         Set   = function(self, val, triggerCallback)
+            if isShutdown then return end
             if triggerCallback == nil then triggerCallback = true end
             setState(val, triggerCallback)
         end,
@@ -1950,7 +2081,7 @@ local farmPage = createTab("Автофарм", "⚡")
 local shopPage = createTab("Магазин",  "🛒")
 local miscPage = createTab("Інше",     "⚙")
 
-local autoLoadToggle, jumpPowerSlider, flySpeedSlider, pickupDistanceSlider
+local autoLoadToggle, jumpPowerSlider, flySpeedSlider, instantTeleportToggle
 local itemEspToggle, autoCandyToggle
 local autoBuyToggle, antiAfkToggle, noclipToggle, autoRespawnToggle
 local itemToggleControls = {}
@@ -1984,7 +2115,7 @@ jumpPowerSlider = createSlider(mainPage, "Головна", "Висота стр�
 end)
 
 -- ── Автофарм ─────────────────────────────────────────────
-createSection(farmPage, "Автофарм", "Основні параметри")
+createSection(farmPage, "Автофарм", "Параметри збору")
 
 local statusLabel = createStatusLabel(farmPage, "Автофарм", "Статус: Очікування...")
 task.spawn(function()
@@ -1995,12 +2126,12 @@ task.spawn(function()
     end
 end)
 
-flySpeedSlider = createSlider(farmPage, "Автофарм", "Швидкість польоту", 50, 350, 5, _G.FlySpeed, function(val)
-    _G.FlySpeed = val
+instantTeleportToggle = createToggle(farmPage, "Автофарм", "Миттєвий телепорт (Instant Mode)", _G.InstantTeleport, function(val)
+    _G.InstantTeleport = val
 end)
 
-pickupDistanceSlider = createSlider(farmPage, "Автофарм", "Дистанція підбору (Неактивно)", 2, 8, 0.5, _G.PickupDistance, function(val)
-    _G.PickupDistance = val
+flySpeedSlider = createSlider(farmPage, "Автофарм", "Швидкість польоту (Tween Mode)", 50, 450, 5, _G.FlySpeed, function(val)
+    _G.FlySpeed = val
 end)
 
 itemEspToggle = createToggle(farmPage, "Автофарм", "Увімкнути ESP", _G.ItemESP, function(val)
@@ -2020,7 +2151,6 @@ createButton(farmPage, "Автофарм", "Увімкнути всі предм
         _G.SelectedItems[name] = true
         if itemToggleControls[name] then itemToggleControls[name]:Set(true, false) end
     end
-    lastCacheRefresh = 0
 end)
 
 createButton(farmPage, "Автофарм", "Вимкнути всі предмети", function()
@@ -2028,7 +2158,6 @@ createButton(farmPage, "Автофарм", "Вимкнути всі предме
         _G.SelectedItems[name] = false
         if itemToggleControls[name] then itemToggleControls[name]:Set(false, false) end
     end
-    lastCacheRefresh = 0
 end)
 
 local sortedItems = {}
@@ -2038,7 +2167,6 @@ table.sort(sortedItems)
 for _, itemName in ipairs(sortedItems) do
     local ctrl = createToggle(farmPage, "Автофарм", itemName, _G.SelectedItems[itemName], function(val)
         _G.SelectedItems[itemName] = val
-        lastCacheRefresh = 0
     end)
     itemToggleControls[itemName] = ctrl
 end
@@ -2115,13 +2243,12 @@ autoRespawnToggle = createToggle(miscPage, "Інше", "Авто-респawn п�
     _G.AutoRespawn = value
 end)
 
-createButton(miscPage, "Інше", "Очистити заблоковані координати", function()
+createButton(miscPage, "Інше", "Очистити чорний список предметів", function()
     table.clear(bannedCoordinates)
-    lastCacheRefresh = 0
     showNotification("UA Killer Hub", "Чорний список координат очищено", 3)
 end)
 
-print("[UA Killer Hub | GUI] Усі вкладки та елементи MonHub створено.")
+print("[UA Killer Hub | GUI] Усі елементи інтерфейсу створено.")
 
 -- =======================================================
 -- СИСТЕМА КОНФІГУРАЦІЇ
@@ -2145,16 +2272,12 @@ local function readConfigFromDisk()
 end
 
 saveCurrentConfig = function()
-    if isShutdown then return end
-    if not writefile then
-        showNotification("Помилка", "writefile не підтримується", 3)
-        return
-    end
+    if isShutdown or not writefile then return end
 
     local cfgData = {
         SelectedItems    = _G.SelectedItems,
         FlySpeed         = _G.FlySpeed,
-        PickupDistance   = _G.PickupDistance,
+        InstantTeleport  = _G.InstantTeleport,
         JumpPower        = JP_Value,
         ItemESP          = _G.ItemESP,
         ItemFarm         = _G.ItemFarm,
@@ -2166,45 +2289,24 @@ saveCurrentConfig = function()
         AutoRespawn      = _G.AutoRespawn,
     }
 
-    print(string.format("[UA Killer Hub | Config] Збереження: ItemFarm=%s AutoSell=%s AutoEventCandy=%s",
-        tostring(cfgData.ItemFarm), tostring(cfgData.AutoSell), tostring(cfgData.AutoEventCandy)))
-
     local jsonString
     local ok, err = pcall(function() jsonString = HttpService:JSONEncode(cfgData) end)
-    if not ok or not jsonString then
-        warn("[UA Killer Hub | Config] Помилка JSON: " .. tostring(err))
-        showNotification("Помилка", "Не вдалося закодувати конфіг", 3)
-        return
-    end
+    if not ok or not jsonString then return end
 
     ok, err = pcall(function() writefile(configFile, jsonString) end)
     if ok then
-        print("[UA Killer Hub | Config] Збережено в " .. configFile)
-        showNotification("Успіх", "Налаштування конфігу збережено!", 3)
-    else
-        warn("[UA Killer Hub | Config] Помилка запису: " .. tostring(err))
-        showNotification("Помилка", "Не вдалося записати файл", 3)
+        showNotification("Успіх", "Налаштування збережено!", 3)
     end
 end
 
--- Ручне синхронне завантаження
 loadCurrentConfig = function(isAutoLoad)
     if isShutdown then return false end
     local data, errMsg = readConfigFromDisk()
-    if not data then
-        local msg = "Конфіг: " .. errMsg
-        if isAutoLoad then print("[UA Killer Hub | Config] " .. msg)
-        else warn("[UA Killer Hub | Config] " .. msg)
-              showNotification("Конфіг", "Файл не знайдено або пошкоджено!", 3.5) end
-        return false
-    end
+    if not data then return false end
 
-    if isShutdown then return false end
-
-    -- Слайдери та фільтр предметів
     if data.JumpPower      and jumpPowerSlider      then jumpPowerSlider:Set(data.JumpPower, true) end
     if data.FlySpeed       and flySpeedSlider       then flySpeedSlider:Set(data.FlySpeed, true) end
-    if data.PickupDistance and pickupDistanceSlider then pickupDistanceSlider:Set(data.PickupDistance, true) end
+    if data.InstantTeleport ~= nil and instantTeleportToggle then instantTeleportToggle:Set(data.InstantTeleport, true) end
 
     if type(data.SelectedItems) == "table" and not isShutdown then
         for itemName, state in pairs(data.SelectedItems) do
@@ -2214,12 +2316,10 @@ loadCurrentConfig = function(isAutoLoad)
                 if itemToggleControls[itemName] then itemToggleControls[itemName]:Set(state, false) end
             end
         end
-        lastCacheRefresh = 0
     end
 
     if isShutdown then return false end
 
-    -- Перемикачі
     if data.ItemESP          ~= nil and itemEspToggle      then itemEspToggle:Set(data.ItemESP, false) _G.ItemESP = data.ItemESP end
     if data.AntiAFK          ~= nil and antiAfkToggle      then antiAfkToggle:Set(data.AntiAFK, true) end
     if data.AutoRespawn      ~= nil and autoRespawnToggle  then autoRespawnToggle:Set(data.AutoRespawn, true) end
@@ -2241,16 +2341,14 @@ loadCurrentConfig = function(isAutoLoad)
 end
 
 -- =======================================================
--- ПОЕТАПНЕ АВТОЗАВАНТАЖЕННЯ З ПІДТРИМКОЮ SHUTDOWN
+-- ПОЕТАПНЕ АВТОЗАВАНТАЖЕННЯ (З SHUTDOWN CHECK)
 -- =======================================================
 local AUTOLOAD_WAIT = 15
 local AUTOLOAD_STEP = 1.0
 
 local function runSteppedAutoLoad()
     showNotification("Auto Load", string.format("Завантаження через %ds...", AUTOLOAD_WAIT), AUTOLOAD_WAIT - 1)
-    print(string.format("[UA Killer Hub | AutoLoad] Очікування %d секунд перед завантаженням конфігу...", AUTOLOAD_WAIT))
-
-    -- Безпечне очікування: якщо під час 15 секунд натиснуто ✕, завантаження миттєво скасовується
+    
     local waitCount = 0
     while waitCount < AUTOLOAD_WAIT and not isShutdown do
         task.wait(1)
@@ -2259,23 +2357,13 @@ local function runSteppedAutoLoad()
     if isShutdown then return end
 
     local data, errMsg = readConfigFromDisk()
-    if not data or isShutdown then
-        if not isShutdown then
-            warn("[UA Killer Hub | AutoLoad] Не вдалося прочитати конфіг: " .. tostring(errMsg))
-            showNotification("Auto Load", "Помилка: конфіг не знайдено або пошкоджено", 4)
-        end
-        return
-    end
+    if not data or isShutdown then return end
 
-    print("[UA Killer Hub | AutoLoad] Початок поетапного відновлення налаштувань...")
     showNotification("Auto Load", "Відновлення налаштувань...", 3)
 
-    if isShutdown then return end
-
-    -- 1. Слайдери та фільтр предметів
-    if data.JumpPower      and jumpPowerSlider      then jumpPowerSlider:Set(data.JumpPower, true) end
-    if data.FlySpeed       and flySpeedSlider       then flySpeedSlider:Set(data.FlySpeed, true) end
-    if data.PickupDistance and pickupDistanceSlider then pickupDistanceSlider:Set(data.PickupDistance, true) end
+    if data.JumpPower and jumpPowerSlider then jumpPowerSlider:Set(data.JumpPower, true) end
+    if data.FlySpeed and flySpeedSlider then flySpeedSlider:Set(data.FlySpeed, true) end
+    if data.InstantTeleport ~= nil and instantTeleportToggle then instantTeleportToggle:Set(data.InstantTeleport, true) end
 
     if type(data.SelectedItems) == "table" and not isShutdown then
         for itemName, state in pairs(data.SelectedItems) do
@@ -2285,8 +2373,6 @@ local function runSteppedAutoLoad()
                 if itemToggleControls[itemName] then itemToggleControls[itemName]:Set(state, false) end
             end
         end
-        lastCacheRefresh = 0
-        print("[UA Killer Hub | AutoLoad] Слайдери та фільтр предметів відновлено.")
     end
 
     local stepWait = 0
@@ -2298,85 +2384,64 @@ local function runSteppedAutoLoad()
 
     local steps = {
         {
-            key     = "ItemFarm",
+            key = "ItemFarm",
             control = itemFarmToggle,
-            label   = "Автофарм",
-            activate = function(val)
-                setItemFarmState(val == true)
-            end,
+            label = "Автофарм",
+            activate = function(val) setItemFarmState(val == true) end,
         },
         {
-            key     = "AutoSell",
+            key = "AutoSell",
             control = autoSellToggle,
-            label   = "Автопродаж",
-            activate = function(val)
-                setAutoSellState(val == true)
-            end,
+            label = "Автопродаж",
+            activate = function(val) setAutoSellState(val == true) end,
         },
         {
-            key     = "AutoEventCandy",
+            key = "AutoEventCandy",
             control = autoCandyToggle,
-            label   = "Авто-здача конфет",
+            label = "Авто-здача конфет",
             activate = function(val)
                 _G.AutoEventCandy = (val == true)
                 if autoCandyToggle then autoCandyToggle:Set(_G.AutoEventCandy, false) end
             end,
         },
         {
-            key     = "AutoBuy",
+            key = "AutoBuy",
             control = autoBuyToggle,
-            label   = "Автокупівля",
+            label = "Автокупівля",
             activate = function(val)
                 _G.AutoBuy = (val == true)
                 if autoBuyToggle then autoBuyToggle:Set(_G.AutoBuy, false) end
-                if _G.AutoBuy and not isShutdown then
-                    task.spawn(function()
-                        while _G.AutoBuy and not isShutdown do
-                            local char   = player.Character
-                            local remote = char and char:FindFirstChild("RemoteEvent")
-                            if remote and not isShutdown then
-                                remote:FireServer("PurchaseShopItem", { ItemName = "1x Lucky Arrow" })
-                            end
-                            local waitSec = 2.5 + math.random() * 1.5
-                            local waited = 0
-                            while waited < waitSec and _G.AutoBuy and not isShutdown do
-                                task.wait(0.2)
-                                waited = waited + 0.2
-                            end
-                        end
-                    end)
-                end
             end,
         },
         {
-            key     = "ItemESP",
+            key = "ItemESP",
             control = itemEspToggle,
-            label   = "ESP",
+            label = "ESP",
             activate = function(val)
                 _G.ItemESP = (val == true)
                 if itemEspToggle then itemEspToggle:Set(_G.ItemESP, false) end
             end,
         },
         {
-            key     = "AntiAFK",
+            key = "AntiAFK",
             control = antiAfkToggle,
-            label   = "Anti-AFK",
+            label = "Anti-AFK",
             activate = function(val)
                 if antiAfkToggle then antiAfkToggle:Set((val == true), true) end
             end,
         },
         {
-            key     = "StandaloneNoClip",
+            key = "StandaloneNoClip",
             control = noclipToggle,
-            label   = "NoClip",
+            label = "NoClip",
             activate = function(val)
                 if noclipToggle then noclipToggle:Set((val == true), true) end
             end,
         },
         {
-            key     = "AutoRespawn",
+            key = "AutoRespawn",
             control = autoRespawnToggle,
-            label   = "Авто-респавн",
+            label = "Авто-респавн",
             activate = function(val)
                 if autoRespawnToggle then autoRespawnToggle:Set((val == true), true) end
             end,
@@ -2387,7 +2452,6 @@ local function runSteppedAutoLoad()
     for i, step in ipairs(steps) do
         if isShutdown then return end
         if manuallyChanged[step.key] then
-            print(string.format("[UA Killer Hub | AutoLoad] Крок %d/%d — '%s' пропущено (ручна зміна гравцем).", i, totalSteps, step.label))
             local sw = 0
             while sw < AUTOLOAD_STEP and not isShutdown do
                 task.wait(0.2)
@@ -2399,11 +2463,8 @@ local function runSteppedAutoLoad()
 
         local savedVal = data[step.key]
         if savedVal == true and not isShutdown then
-            print(string.format("[UA Killer Hub | AutoLoad] Крок %d/%d — '%s' увімкнено.", i, totalSteps, step.label))
             showNotification("Auto Load", string.format("(%d/%d) %s", i, totalSteps, step.label), AUTOLOAD_STEP + 0.5)
             step.activate(true)
-        else
-            print(string.format("[UA Killer Hub | AutoLoad] Крок %d/%d — '%s' збережено як false, пропускаємо.", i, totalSteps, step.label))
         end
 
         local sw = 0
@@ -2415,13 +2476,13 @@ local function runSteppedAutoLoad()
     end
 
     if isShutdown then return end
-    print("[UA Killer Hub | AutoLoad] Поетапне відновлення завершено.")
     showNotification("Auto Load", "✓ Всі налаштування відновлено!", 4)
 end
 
 -- =======================================================
--- ВІДКРИТТЯ ІНТЕРФЕЙСУ
+-- ПЕРВИННИЙ СКАНИНГ ТА СТАРТ
 -- =======================================================
+scanAllItems()
 switchTab("Головна")
 print("[UA Killer Hub | Init] Інтерфейс відкрито та готовий до роботи!")
 
