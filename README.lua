@@ -2421,4 +2421,4 @@ if _G.AutoSell and not isShutdown then
     startAutoSellThread()
 end
 
-showNotification("UA Killer Hub", "Завантажено успішно! (RightShift — сховати)", 4)
+showNotification("UA Killer Hub", "Завантажено успішно! (RightShift — сховати)", 4) от зачем ти міняєш ось цей скрипт робе просто дай файл  і назву в цій папці якій ти робиш і добав в цей скрипт фарм з метіон і все той блокнот під назвою 1 зроби записник новий і постав в нього скрипт
