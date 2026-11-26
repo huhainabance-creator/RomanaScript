@@ -44,13 +44,13 @@ local configFile   = "UAKillerHub/YBA_Config.json"
 local shouldAutoLoad = false
 
 -- =======================================================
--- ПОВНИЙ КОМПЛЕКС АНТИЧИТ-БАЙПАСІВ METHION (З 1.TXT)
+-- НАДІЙНІ ТА БЕЗПЕЧНІ АНТИЧИТ-БАЙПАСИ (БЕЗ ВИЛЬОТІВ)
 -- =======================================================
 local RETURNER_KEY = "idklolbrah2de"
 local RETURNER_RESPONSE = "  ___XP DE KEY"
 local bypassSupported = false
 
--- 1. Головний YBA Returner Remote Hook (запобігає всім кікам античиту YBA)
+-- 1. YBA Returner Remote Hook (Namecall - безпечний, не крашить гру)
 pcall(function()
     if hookmetamethod and newcclosure and checkcaller then
         local old
@@ -65,96 +65,46 @@ pcall(function()
     end
 end)
 
--- 1.1 Додатковий захист Returner через __index (на випадок прямого Remote.InvokeServer)
+-- 2. Глобальний Vector3 Metatable Magnitude Bypass (як у Methion 1.txt)
 pcall(function()
-    if hookmetamethod and newcclosure and checkcaller then
-        local oldIndex
-        oldIndex = hookmetamethod(game, "__index", newcclosure(function(self, key)
-            if not checkcaller() and typeof(self) == "Instance" and self.Name == "Returner" then
-                if key == "InvokeServer" or key == "FireServer" then
-                    return function(remote, ...)
-                        if rawequal((...), RETURNER_KEY) then
-                            return RETURNER_RESPONSE
-                        end
-                        return oldIndex(remote, key)(remote, ...)
-                    end
-                end
+    local meta = getrawmetatable(Vector3.new())
+    if not meta then return end
+    setreadonly(meta, false)
+    local old = meta.__index
+    meta.__index = newcclosure(function(self, index)
+        if not checkcaller() and (index == "magnitude" or index == "Magnitude") then
+            local cs = getcallingscript()
+            if cs then
+                local name = typeof(cs) == "Instance" and (cs.Name or "") or tostring(cs)
+                if name == "ItemSpawn" then return 0 end
             end
-            return oldIndex(self, key)
-        end))
-    end
-end)
-
--- 2. Глобальний Vector3 Metatable Magnitude Bypass (як у 1.txt)
-pcall(function()
-    if getrawmetatable and setreadonly and newcclosure and checkcaller and getcallingscript then
-        local meta = getrawmetatable(Vector3.new())
-        if meta then
-            setreadonly(meta, false)
-            local old = meta.__index
-            meta.__index = newcclosure(function(self, index)
-                if not checkcaller() and (index == "magnitude" or index == "Magnitude") then
-                    local cs = getcallingscript()
-                    if cs then
-                        local name = typeof(cs) == "Instance" and (cs.Name or "") or tostring(cs)
-                        if name == "ItemSpawn" then return 0 end
-                    end
-                end
-                return old(self, index)
-            end)
-            setreadonly(meta, true)
-            print("[UA Killer Hub | Init] Global Vector3 Metatable Magnitude Bypass активовано.")
         end
-    end
-end)
-
--- 2.1 Додатковий захист персонажа Item Magnitude Bypass
-pcall(function()
-    if hookmetamethod and newcclosure and checkcaller and getcallingscript then
-        local char = player.Character or player.CharacterAdded:Wait()
-        local primary = char:WaitForChild("HumanoidRootPart", 3) or char.PrimaryPart
-        if primary then
-            local OldIndexItem
-            OldIndexItem = hookmetamethod(primary.Position, "__index", newcclosure(function(self, Key)
-                if not checkcaller() and Key:lower() == "magnitude" and getcallingscript().Name == "ItemSpawn" then
-                    return 0
-                end
-                return OldIndexItem(self, Key)
-            end))
-        end
-    end
+        return old(self, index)
+    end)
+    setreadonly(meta, true)
+    print("[UA Killer Hub | Init] Vector3 Metatable Magnitude Bypass активовано.")
 end)
 
 -- 3. Безпечний WalkSpeed/Crash Bypass
 pcall(function()
-    local FunctionLibrary = require(
-        ReplicatedStorage:WaitForChild("Modules", 2):WaitForChild("FunctionLibrary", 2)
-    )
-    local OldPcall = FunctionLibrary.pcall
-    FunctionLibrary.pcall = function(...)
-        local args = { ... }
-        if type(args[1]) == "function" and #getupvalues(args[1]) == 11 then
-            return
-        end
-        return OldPcall(...)
-    end
-    print("[UA Killer Hub | Init] WalkSpeed/Crash Bypass активовано.")
-end)
-
--- 4. Резервний Fallback-завантажувач (якщо екзекутор не підтримує hookmetamethod)
-if not bypassSupported then
-    pcall(function()
-        local fallbackSource = game:HttpGet("https://pastebin.com/raw/c9xy3XzA")
-        if type(fallbackSource) == "string" and #fallbackSource > 0 then
-            local fallbackChunk = loadstring(fallbackSource)
-            if type(fallbackChunk) == "function" then
-                fallbackChunk()
-                bypassSupported = true
-                print("[UA Killer Hub | Init] Fallback Bypass успішно завантажено з хмари.")
+    local modules = ReplicatedStorage:FindFirstChild("Modules")
+    local fl = modules and modules:FindFirstChild("FunctionLibrary")
+    if fl and getupvalues then
+        local FunctionLibrary = require(fl)
+        if FunctionLibrary and FunctionLibrary.pcall then
+            local OldPcall = FunctionLibrary.pcall
+            FunctionLibrary.pcall = function(...)
+                local args = { ... }
+                local ok, ups = pcall(getupvalues, args[1])
+                if ok and type(ups) == "table" and #ups == 11 then
+                    return
+                end
+                return OldPcall(...)
             end
+            print("[UA Killer Hub | Init] WalkSpeed/Crash Bypass активовано.")
         end
-    end)
-end
+    end
+end)
 
 -- Ініціалізація папки та конфігурації
 pcall(function()
@@ -234,27 +184,8 @@ local noclipConnection
 local antiAfkConnection
 local JP_Value = 50
 
--- =======================================================
--- АВТО-РЕКОНЕКТ ПРИ ДІСКОНЕКТІ / КІКУ (З 1.TXT)
--- =======================================================
+-- Стан готовності систем
 local TeleportService = game:GetService("TeleportService")
-local GuiService      = game:GetService("GuiService")
-local autoRejoinConn  = nil
-local rejoinBusy      = false
-
-pcall(function()
-    autoRejoinConn = GuiService.ErrorMessageChanged:Connect(function(errMsg)
-        if isShutdown or not errMsg or errMsg == "" or rejoinBusy then return end
-        rejoinBusy = true
-        task.spawn(function()
-            task.wait(0.5)
-            pcall(function()
-                TeleportService:Teleport(game.PlaceId, player)
-            end)
-        end)
-    end)
-    trackConnection(autoRejoinConn)
-end)
 
 local uiElementsRegistry = {}
 
