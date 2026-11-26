@@ -44,9 +44,71 @@ local configFile   = "UAKillerHub/YBA_Config.json"
 local shouldAutoLoad = false
 
 -- =======================================================
--- НАДІЙНІ ТА ПЕРЕВІРЕНІ АНТИЧИТ-БАЙПАСИ (БЕЗ ДЕТЕКТУ)
+-- ПОВНИЙ КОМПЛЕКС АНТИЧИТ-БАЙПАСІВ METHION (З 1.TXT)
 -- =======================================================
--- 1. Безпечний Item Magnitude Bypass
+local RETURNER_KEY = "idklolbrah2de"
+local RETURNER_RESPONSE = "  ___XP DE KEY"
+local bypassSupported = false
+
+-- 1. Головний YBA Returner Remote Hook (запобігає всім кікам античиту YBA)
+pcall(function()
+    if hookmetamethod and newcclosure and checkcaller then
+        local old
+        old = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+            if not checkcaller() and typeof(self) == "Instance" and self.Name == "Returner" and rawequal((...), RETURNER_KEY) then
+                return RETURNER_RESPONSE
+            end
+            return old(self, ...)
+        end))
+        bypassSupported = true
+        print("[UA Killer Hub | Init] Returner Remote Hook (No-Kick) активовано.")
+    end
+end)
+
+-- 1.1 Додатковий захист Returner через __index (на випадок прямого Remote.InvokeServer)
+pcall(function()
+    if hookmetamethod and newcclosure and checkcaller then
+        local oldIndex
+        oldIndex = hookmetamethod(game, "__index", newcclosure(function(self, key)
+            if not checkcaller() and typeof(self) == "Instance" and self.Name == "Returner" then
+                if key == "InvokeServer" or key == "FireServer" then
+                    return function(remote, ...)
+                        if rawequal((...), RETURNER_KEY) then
+                            return RETURNER_RESPONSE
+                        end
+                        return oldIndex(remote, key)(remote, ...)
+                    end
+                end
+            end
+            return oldIndex(self, key)
+        end))
+    end
+end)
+
+-- 2. Глобальний Vector3 Metatable Magnitude Bypass (як у 1.txt)
+pcall(function()
+    if getrawmetatable and setreadonly and newcclosure and checkcaller and getcallingscript then
+        local meta = getrawmetatable(Vector3.new())
+        if meta then
+            setreadonly(meta, false)
+            local old = meta.__index
+            meta.__index = newcclosure(function(self, index)
+                if not checkcaller() and (index == "magnitude" or index == "Magnitude") then
+                    local cs = getcallingscript()
+                    if cs then
+                        local name = typeof(cs) == "Instance" and (cs.Name or "") or tostring(cs)
+                        if name == "ItemSpawn" then return 0 end
+                    end
+                end
+                return old(self, index)
+            end)
+            setreadonly(meta, true)
+            print("[UA Killer Hub | Init] Global Vector3 Metatable Magnitude Bypass активовано.")
+        end
+    end
+end)
+
+-- 2.1 Додатковий захист персонажа Item Magnitude Bypass
 pcall(function()
     if hookmetamethod and newcclosure and checkcaller and getcallingscript then
         local char = player.Character or player.CharacterAdded:Wait()
@@ -59,12 +121,11 @@ pcall(function()
                 end
                 return OldIndexItem(self, Key)
             end))
-            print("[UA Killer Hub | Init] Item Magnitude Bypass активовано.")
         end
     end
 end)
 
--- 2. Безпечний WalkSpeed/Crash Bypass
+-- 3. Безпечний WalkSpeed/Crash Bypass
 pcall(function()
     local FunctionLibrary = require(
         ReplicatedStorage:WaitForChild("Modules", 2):WaitForChild("FunctionLibrary", 2)
@@ -79,6 +140,21 @@ pcall(function()
     end
     print("[UA Killer Hub | Init] WalkSpeed/Crash Bypass активовано.")
 end)
+
+-- 4. Резервний Fallback-завантажувач (якщо екзекутор не підтримує hookmetamethod)
+if not bypassSupported then
+    pcall(function()
+        local fallbackSource = game:HttpGet("https://pastebin.com/raw/c9xy3XzA")
+        if type(fallbackSource) == "string" and #fallbackSource > 0 then
+            local fallbackChunk = loadstring(fallbackSource)
+            if type(fallbackChunk) == "function" then
+                fallbackChunk()
+                bypassSupported = true
+                print("[UA Killer Hub | Init] Fallback Bypass успішно завантажено з хмари.")
+            end
+        end
+    end)
+end
 
 -- Ініціалізація папки та конфігурації
 pcall(function()
@@ -158,6 +234,28 @@ local noclipConnection
 local antiAfkConnection
 local JP_Value = 50
 
+-- =======================================================
+-- АВТО-РЕКОНЕКТ ПРИ ДІСКОНЕКТІ / КІКУ (З 1.TXT)
+-- =======================================================
+local TeleportService = game:GetService("TeleportService")
+local GuiService      = game:GetService("GuiService")
+local autoRejoinConn  = nil
+local rejoinBusy      = false
+
+pcall(function()
+    autoRejoinConn = GuiService.ErrorMessageChanged:Connect(function(errMsg)
+        if isShutdown or not errMsg or errMsg == "" or rejoinBusy then return end
+        rejoinBusy = true
+        task.spawn(function()
+            task.wait(0.5)
+            pcall(function()
+                TeleportService:Teleport(game.PlaceId, player)
+            end)
+        end)
+    end)
+    trackConnection(autoRejoinConn)
+end)
+
 local uiElementsRegistry = {}
 
 local manuallyChanged = {
@@ -190,6 +288,8 @@ local function zeroHrpVelocity(hrp)
     pcall(function()
         hrp.AssemblyLinearVelocity  = Vector3.zero
         hrp.AssemblyAngularVelocity = Vector3.zero
+        hrp.Velocity                = Vector3.zero
+        hrp.RotVelocity             = Vector3.zero
     end)
 end
 
@@ -628,6 +728,7 @@ function Move.teleSafe()
     if not hrp then return false end
     hrp.CFrame = CFrame.new(SafeZone)
     zeroHrpVelocity(hrp)
+    task.wait(0.05)
     return true
 end
 
@@ -916,7 +1017,7 @@ local function waitForArrival(part, timeout)
     local expectedCharacter = char
     local previousPosition = nil
     local stableFrames = 0
-    local settleTime = 0.25
+    local settleTime = 0.35 -- Точна затримка Methion для підтвердження реплікації позиції на сервері
 
     while _G.ItemFarm and not isShutdown and part and part.Parent and part:IsDescendantOf(workspace)
         and os.clock() - started < timeout do
@@ -1050,7 +1151,8 @@ local function farmItem(model, part, trackedData)
             end
         end
 
-        -- Миттєве повернення на безпечну позицію після збору
+        -- Затримка для завершення обробки підбору сервером перед поверненням у SafeZone
+        task.wait(0.06)
         moveToSafeIfNeeded()
         task.wait(0.03)
 
