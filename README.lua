@@ -1,4 +1,4 @@
--- UA Killer Hub | YBA — Версія з паралельним Farm та ізольованим циклом AutoSell (100с Snapshot)
+-- UA Killer Hub | YBA — Версія з повноцінною системою Shutdown Script
 print("[UA Killer Hub | Init] Початок запуску скрипта...")
 
 if not game:IsLoaded() then
@@ -21,6 +21,19 @@ while not player do
     player = Players.LocalPlayer
 end
 print("[UA Killer Hub | Init] Гравець ідентифікований: " .. player.Name)
+
+-- =======================================================
+-- СИСТЕМА УПРАВЛІННЯ ЖИТТЄВИМ ЦИКЛОМ СКРИПТА (SHUTDOWN)
+-- =======================================================
+local isShutdown = false
+local scriptConnections = {}
+
+local function trackConnection(conn)
+    if conn then
+        table.insert(scriptConnections, conn)
+    end
+    return conn
+end
 
 local autoLoadFile = "UAKillerHub/YBA_AutoLoad.txt"
 local configFile   = "UAKillerHub/YBA_Config.json"
@@ -150,9 +163,6 @@ local manuallyChanged = {
     AutoRespawn      = false,
 }
 
--- ====================
--- ДОПОМІЖНІ ФУНКЦІЇ ITEMFARM
--- ====================
 local function setFarmStatus(text)
     farmStatusText = text
 end
@@ -317,6 +327,7 @@ local function getNearestItem(hrp)
 end
 
 local function applyESP(part, name)
+    if isShutdown then return end
     if espObjects[part] then return end
     if not part or part.Transparency == 1 or isCoordinateBanned(part.Position) or isInvalidItemPart(part) then return end
 
@@ -342,7 +353,7 @@ end
 
 local function clearESP()
     for part, gui in pairs(espObjects) do
-        if gui then gui:Destroy() end
+        if gui then pcall(function() gui:Destroy() end) end
         espObjects[part] = nil
     end
     table.clear(espObjects)
@@ -398,9 +409,15 @@ local function stopFlight()
 end
 
 local function ensureNoClip()
-    if noclipConnection then return end
+    if noclipConnection or isShutdown then return end
     noclipConnection = RunService.Stepped:Connect(function()
-        if not _G.ItemFarm and not _G.StandaloneNoClip then return end
+        if isShutdown or (not _G.ItemFarm and not _G.StandaloneNoClip) then
+            if noclipConnection and isShutdown then
+                pcall(function() noclipConnection:Disconnect() end)
+                noclipConnection = nil
+            end
+            return
+        end
         local char = player.Character
         if not char then return end
         local hrp = char:FindFirstChild("HumanoidRootPart")
@@ -413,6 +430,7 @@ local function ensureNoClip()
 end
 
 local function moveToItemAndPickup(item)
+    if isShutdown then return false end
     if not item or not item.part or not item.part:IsDescendantOf(workspace) then return false end
     if not item.prompt or not item.prompt:IsDescendantOf(workspace) then return false end
     if isInvalidItemPart(item.parent) then return false end
@@ -437,7 +455,12 @@ local function moveToItemAndPickup(item)
 
     local tween = TweenService:Create(cframeValue, TweenInfo.new(tweenTime, Enum.EasingStyle.Linear), { Value = targetCFrame })
 
-    local heartbeatConn = RunService.Heartbeat:Connect(function()
+    local heartbeatConn
+    heartbeatConn = RunService.Heartbeat:Connect(function()
+        if isShutdown then
+            if heartbeatConn then heartbeatConn:Disconnect() end
+            return
+        end
         if not char or not char.Parent then return end
         local currentHrp = char:FindFirstChild("HumanoidRootPart")
         if not currentHrp or not cframeValue.Parent then return end
@@ -453,7 +476,8 @@ local function moveToItemAndPickup(item)
     flightState = { cframeValue = cframeValue, tween = tween, heartbeatConn = heartbeatConn }
 
     local function shouldContinue()
-        return _G.ItemFarm
+        return not isShutdown
+            and _G.ItemFarm
             and item.part:IsDescendantOf(workspace)
             and not isInvalidItemPart(item.part)
             and item.prompt:IsDescendantOf(workspace)
@@ -466,7 +490,7 @@ local function moveToItemAndPickup(item)
 
     local flightTimeout = tick() + tweenTime + 2.0
     while not finished do
-        if not shouldContinue() or not hrp or not hrp.Parent or tick() > flightTimeout then
+        if isShutdown or not shouldContinue() or not hrp or not hrp.Parent or tick() > flightTimeout then
             if tweenCompletedConn then tweenCompletedConn:Disconnect() end
             cleanupFlight()
             return false
@@ -474,7 +498,7 @@ local function moveToItemAndPickup(item)
         RunService.Heartbeat:Wait()
     end
 
-    if not shouldContinue() then cleanupFlight() return false end
+    if not shouldContinue() or isShutdown then cleanupFlight() return false end
 
     targetCFrame      = CFrame.new(item.part.Position + Vector3.new(0, 1.2, 0))
     cframeValue.Value = targetCFrame
@@ -486,7 +510,7 @@ local function moveToItemAndPickup(item)
 
     task.wait(0.04)
 
-    if not shouldContinue() then cleanupFlight() return false end
+    if not shouldContinue() or isShutdown then cleanupFlight() return false end
 
     local backpack = player:FindFirstChild("Backpack")
     local initialBackpackCount = backpack and #backpack:GetChildren() or 0
@@ -502,7 +526,7 @@ local function moveToItemAndPickup(item)
     item.prompt.HoldDuration        = 0
 
     local requestTime = os.clock()
-    if fireproximityprompt then
+    if fireproximityprompt and not isShutdown then
         fireproximityprompt(item.prompt, 0)
     end
 
@@ -511,6 +535,7 @@ local function moveToItemAndPickup(item)
     local checkStart = os.clock()
 
     while (os.clock() - checkStart) < maxWait do
+        if isShutdown then break end
         if not item.prompt:IsDescendantOf(workspace) or not item.part:IsDescendantOf(workspace) or isInvalidItemPart(item.parent) then
             confirmed = true
             break
@@ -536,6 +561,8 @@ local function moveToItemAndPickup(item)
     local latency = os.clock() - requestTime
     cleanupFlight()
 
+    if isShutdown then return false end
+
     if confirmed then
         print(string.format("[UA Killer Hub | ItemFarm] Підтверджено підбір [%s] за %.3f с (Instance: %s)",
             item.name, latency, tostring(item.part)))
@@ -548,7 +575,7 @@ local function moveToItemAndPickup(item)
 end
 
 local function tryRespawn()
-    if not _G.AutoRespawn then return end
+    if not _G.AutoRespawn or isShutdown then return end
     local char, _, hum = getCharacter()
     if hum and hum.Health <= 0 then
         local remotesFolder = ReplicatedStorage:FindFirstChild("Remotes")
@@ -572,15 +599,16 @@ end
 local itemFarmToggle
 
 local function startFarmThread()
-    if farmThreadActive then return end
+    if farmThreadActive or isShutdown then return end
     farmThreadActive = true
     farmSessionId    = farmSessionId + 1
     local currentSession = farmSessionId
 
     task.spawn(function()
         setFarmStatus("Пошук предметів...")
-        while _G.ItemFarm and farmThreadActive and (farmSessionId == currentSession) do
+        while _G.ItemFarm and farmThreadActive and (farmSessionId == currentSession) and not isShutdown do
             tryRespawn()
+            if isShutdown then break end
             local _, hrp = getCharacter()
             if not hrp then
                 setFarmStatus("Очікування персонажа...")
@@ -597,6 +625,8 @@ local function startFarmThread()
             setFarmStatus("Лечу до: " .. targetItem.name)
             local itemPart = targetItem.part
             local success = moveToItemAndPickup(targetItem)
+
+            if isShutdown then break end
 
             if success then
                 failedItemAttempts[itemPart] = nil
@@ -630,6 +660,7 @@ local function startFarmThread()
 end
 
 local function setItemFarmState(enabled)
+    if isShutdown then return end
     _G.ItemFarm = (enabled == true)
 
     if itemFarmToggle and itemFarmToggle:Get() ~= _G.ItemFarm then
@@ -713,7 +744,7 @@ end
 
 local function autoClickDialogueButtons()
     local gui = getDialogueGui()
-    if not gui then return end
+    if not gui or isShutdown then return end
     for _, btn in ipairs(gui:GetDescendants()) do
         if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and isGuiElementVisible(btn) then
             local txt = btn.Text or ""
@@ -762,6 +793,7 @@ local function closeMerchantDialogue()
 end
 
 local function sellSingleItem(item)
+    if isShutdown then return false, "Shutdown" end
     if not item or isItemSold(item) or DontSell[item.Name] then return true, "AlreadySold" end
     local char, _, hum = getCharacter()
     local remote   = char and char:FindFirstChild("RemoteEvent")
@@ -770,24 +802,27 @@ local function sellSingleItem(item)
 
     hum:EquipTool(item)
     local equipTimeout = tick() + 0.8
-    while tick() < equipTimeout and item.Parent ~= char do task.wait(0.04) end
-    if item.Parent ~= char then return false, "EquipTimeout" end
+    while tick() < equipTimeout and item.Parent ~= char and not isShutdown do task.wait(0.04) end
+    if item.Parent ~= char or isShutdown then return false, "EquipTimeoutOrShutdown" end
 
     task.wait(0.12)
+    if isShutdown then return false, "Shutdown" end
     remote:FireServer("PromptTriggered", merchant)
     task.wait(0.12)
     autoClickDialogueButtons()
 
+    if isShutdown then return false, "Shutdown" end
     remote:FireServer("DialogueType", { Option = "Option1", Dialogue = "Dialogue1", NPC = "Merchant" })
     task.wait(0.12)
     autoClickDialogueButtons()
 
+    if isShutdown then return false, "Shutdown" end
     remote:FireServer("DialogueType", { Option = "Option1", Dialogue = "Dialogue5", NPC = "Merchant" })
     task.wait(0.12)
     autoClickDialogueButtons()
 
     local sellTimeout = tick() + 1.2
-    while tick() < sellTimeout do
+    while tick() < sellTimeout and not isShutdown do
         if isItemSold(item) then break end
         autoClickDialogueButtons()
         task.wait(0.08)
@@ -809,9 +844,11 @@ local function sellSingleItem(item)
 end
 
 local function sellSingleItemWithRetries(item, maxRetries)
+    if isShutdown then return false, "Shutdown" end
     maxRetries = maxRetries or 3
     local lastError = "Unknown"
     for attempt = 1, maxRetries do
+        if isShutdown then return false, "Shutdown" end
         if isItemSold(item) then return true, "Success" end
         local ok, errStage = sellSingleItem(item)
         if ok then return true, "Success" end
@@ -827,15 +864,14 @@ end
 local autoSellToggle       = nil
 local autoSellThreadActive = false
 local autoSellSessionId    = 0
-local FARM_CYCLE_DURATION  = 100 -- 100 секунд фарму перед кожним продажем
+local FARM_CYCLE_DURATION  = 100 -- 100 секунд фарму перед продажем
 
--- Фіксація знімка предметів строго на момент завершення 100 секунд
 local function getSellableSnapshot()
     local snapshot = {}
     local seen = {}
 
     local function collect(container)
-        if not container then return end
+        if not container or isShutdown then return end
         for _, item in ipairs(container:GetChildren()) do
             if item:IsA("Tool") and not DontSell[item.Name] and not isItemSold(item) and not seen[item] then
                 seen[item] = true
@@ -850,7 +886,7 @@ local function getSellableSnapshot()
 end
 
 local function startAutoSellThread()
-    if autoSellThreadActive then return end
+    if autoSellThreadActive or isShutdown then return end
     autoSellThreadActive = true
     autoSellSessionId    = autoSellSessionId + 1
     local currentSession = autoSellSessionId
@@ -858,48 +894,48 @@ local function startAutoSellThread()
     task.spawn(function()
         print(string.format("[UA Killer Hub | AutoSell] Потік запущено. Фарм триває %d с перед першим продажем...", FARM_CYCLE_DURATION))
 
-        while _G.AutoSell and autoSellThreadActive and (autoSellSessionId == currentSession) do
-            -- 1. Таймер 100 секунд, під час якого Farm спокійно збирає предмети в інвентар
+        while _G.AutoSell and autoSellThreadActive and (autoSellSessionId == currentSession) and not isShutdown do
+            -- 1. Таймер 100 секунд
             local elapsed = 0
-            while elapsed < FARM_CYCLE_DURATION and _G.AutoSell and (autoSellSessionId == currentSession) do
+            while elapsed < FARM_CYCLE_DURATION and _G.AutoSell and (autoSellSessionId == currentSession) and not isShutdown do
                 task.wait(1)
                 elapsed = elapsed + 1
             end
 
-            if not _G.AutoSell or (autoSellSessionId ~= currentSession) then break end
+            if not _G.AutoSell or (autoSellSessionId ~= currentSession) or isShutdown then break end
 
-            -- Чекаємо звільнення від інших діалогів (наприклад, здачі цукерок), щоб не конфліктувати
-            while isBusy and _G.AutoSell and (autoSellSessionId == currentSession) do
+            while isBusy and _G.AutoSell and (autoSellSessionId == currentSession) and not isShutdown do
                 task.wait(0.2)
             end
 
-            if not _G.AutoSell or (autoSellSessionId ~= currentSession) then break end
+            if not _G.AutoSell or (autoSellSessionId ~= currentSession) or isShutdown then break end
 
             isBusy = true
 
-            -- 2. Створюємо ізольований snapshot предметів, які вже є в інвентарі.
-            -- Нові предмети, які збираються під час продажу, не потрапляють у цей список.
             local snapshot = getSellableSnapshot()
 
-            if #snapshot > 0 then
+            if #snapshot > 0 and not isShutdown then
                 print(string.format("[UA Killer Hub | AutoSell] Створено snapshot: %d предметів. Початок продажу (Farm працює паралельно)...", #snapshot))
                 for _, item in ipairs(snapshot) do
-                    if not _G.AutoSell or (autoSellSessionId ~= currentSession) then break end
+                    if not _G.AutoSell or (autoSellSessionId ~= currentSession) or isShutdown then break end
                     if not isItemSold(item) and not DontSell[item.Name] then
                         sellSingleItemWithRetries(item, 3)
                         task.wait(0.15)
                     end
                 end
-                closeMerchantDialogue()
+                if not isShutdown then
+                    closeMerchantDialogue()
+                end
                 print("[UA Killer Hub | AutoSell] Продаж поточного snapshot повністю завершено!")
             else
-                print("[UA Killer Hub | AutoSell] Snapshot порожній: предметів для продажу немає.")
+                if not isShutdown then
+                    print("[UA Killer Hub | AutoSell] Snapshot порожній: предметів для продажу немає.")
+                end
             end
 
             isBusy = false
 
-            -- 6. Коли продаж завершився, автоматично запускається наступний цикл на 100 секунд
-            if _G.AutoSell and (autoSellSessionId == currentSession) then
+            if _G.AutoSell and (autoSellSessionId == currentSession) and not isShutdown then
                 print(string.format("[UA Killer Hub | AutoSell] Запуск наступного 100-секундного циклу фарму.", FARM_CYCLE_DURATION))
             end
         end
@@ -907,13 +943,16 @@ local function startAutoSellThread()
         if autoSellSessionId == currentSession then
             autoSellThreadActive = false
             isBusy               = false
-            closeMerchantDialogue()
+            if not isShutdown then
+                closeMerchantDialogue()
+            end
             print("[UA Killer Hub | AutoSell] Потік автопродажу повністю зупинено.")
         end
     end)
 end
 
 local function setAutoSellState(enabled)
+    if isShutdown then return end
     _G.AutoSell = (enabled == true)
 
     if autoSellToggle and autoSellToggle:Get() ~= _G.AutoSell then
@@ -948,7 +987,7 @@ end
 
 local function clickEventCandyOption()
     local gui = getDialogueGui()
-    if not gui then return false end
+    if not gui or isShutdown then return false end
     for _, btn in ipairs(gui:GetDescendants()) do
         if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and isGuiElementVisible(btn) then
             local txt = btn.Text or ""
@@ -969,7 +1008,7 @@ end
 
 local function findJackDialogue()
     local gui = getDialogueGui()
-    if not gui then return nil end
+    if not gui or isShutdown then return nil end
 
     local isGuiEnabled = (gui:IsA("ScreenGui") and gui.Enabled) or gui.Visible
     if not isGuiEnabled then return nil end
@@ -1027,7 +1066,7 @@ local function findJackDialogue()
 end
 
 local function clickContinueButton(jackData)
-    if not jackData then return end
+    if not jackData or isShutdown then return end
 
     pcall(function()
         local targetBtn = (jackData.continueElem and jackData.continueElem:IsA("GuiButton") and jackData.continueElem)
@@ -1044,7 +1083,7 @@ local function clickContinueButton(jackData)
         end
 
         local targetBox = jackData.dialogueBox or (jackData.pointsElem and jackData.pointsElem.Parent) or jackData.pointsElem
-        if VirtualInputManager and targetBox and targetBox:IsA("GuiObject") then
+        if VirtualInputManager and targetBox and targetBox:IsA("GuiObject") and not isShutdown then
             local absPos = targetBox.AbsolutePosition
             local absSize = targetBox.AbsoluteSize
             local clickX = absPos.X + absSize.X / 2
@@ -1055,7 +1094,7 @@ local function clickContinueButton(jackData)
             VirtualInputManager:SendMouseButtonEvent(clickX, clickY, 0, false, game, 0)
         end
 
-        if VirtualInputManager and jackData.continueElem and jackData.continueElem:IsA("GuiObject") and jackData.continueElem ~= targetBox then
+        if VirtualInputManager and jackData.continueElem and jackData.continueElem:IsA("GuiObject") and jackData.continueElem ~= targetBox and not isShutdown then
             local absPos = jackData.continueElem.AbsolutePosition
             local absSize = jackData.continueElem.AbsoluteSize
             local clickX = absPos.X + absSize.X / 2
@@ -1069,6 +1108,7 @@ local function clickContinueButton(jackData)
 end
 
 local function submitAllCandies()
+    if isShutdown then return false end
     local char, _, hum = getCharacter()
     local remote   = char and char:FindFirstChild("RemoteEvent")
     local eventNPC = getEventNPC()
@@ -1080,16 +1120,16 @@ local function submitAllCandies()
 
         local optionFound   = false
         local optionTimeout = tick() + 2.5
-        while tick() < optionTimeout and _G.AutoEventCandy do
+        while tick() < optionTimeout and _G.AutoEventCandy and not isShutdown do
             if clickEventCandyOption() then optionFound = true break end
             task.wait(0.15)
         end
-        if not optionFound then return end
+        if not optionFound or isShutdown then return end
 
         local pointsFound   = false
         local jackData      = nil
         local pointsTimeout = tick() + 4.0
-        while tick() < pointsTimeout and _G.AutoEventCandy do
+        while tick() < pointsTimeout and _G.AutoEventCandy and not isShutdown do
             jackData = findJackDialogue()
             if jackData and jackData.hasPoints then
                 pointsFound = true
@@ -1097,14 +1137,15 @@ local function submitAllCandies()
             end
             task.wait(0.15)
         end
-        if not pointsFound or not jackData then return end
+        if not pointsFound or not jackData or isShutdown then return end
 
         task.wait(0.35)
+        if isShutdown then return end
         clickContinueButton(jackData)
 
         local closeTimeout = tick() + 2.0
         local isClosed     = false
-        while tick() < closeTimeout do
+        while tick() < closeTimeout and not isShutdown do
             task.wait(0.15)
             if not findJackDialogue() then
                 isClosed = true
@@ -1116,7 +1157,7 @@ local function submitAllCandies()
             success = true
         else
             local retryData = findJackDialogue()
-            if retryData then
+            if retryData and not isShutdown then
                 clickContinueButton(retryData)
                 task.wait(0.3)
                 if not findJackDialogue() then success = true end
@@ -1126,16 +1167,17 @@ local function submitAllCandies()
     return success
 end
 
--- Автономний потік здачі цукерок (ізольований, не блокує Farm та узгоджений із Sell через isBusy)
+-- Автономний потік здачі цукерок
 task.spawn(function()
-    while true do
+    while not isShutdown do
         task.wait(0.5)
+        if isShutdown then break end
         if isBusy then continue end
 
         if _G.AutoEventCandy and countTotalCandies() >= 10 then
             isBusy = true
             closeMerchantDialogue()
-            while countTotalCandies() > 0 and _G.AutoEventCandy do
+            while countTotalCandies() > 0 and _G.AutoEventCandy and not isShutdown do
                 submitAllCandies()
                 task.wait(0.5)
             end
@@ -1145,23 +1187,30 @@ task.spawn(function()
 end)
 
 local function applyJumpPower()
+    if isShutdown then return end
     local _, _, hum = getCharacter()
     if hum then hum.JumpPower = JP_Value end
 end
 
--- Чисте оновлення при респавні персонажа
-player.CharacterAdded:Connect(function(newChar)
+trackConnection(player.CharacterAdded:Connect(function(newChar)
+    if isShutdown then return end
     task.wait(0.5)
+    if isShutdown then return end
     applyJumpPower()
+end))
+
+task.spawn(function()
+    while not isShutdown do
+        task.wait(0.2)
+        if isShutdown then break end
+        applyJumpPower()
+    end
 end)
 
 task.spawn(function()
-    while task.wait(0.2) do applyJumpPower() end
-end)
-
-task.spawn(function()
-    while true do
+    while not isShutdown do
         task.wait(0.8)
+        if isShutdown then break end
         if _G.ItemESP then
             for part, gui in pairs(espObjects) do
                 if not part or not part.Parent or not part:IsDescendantOf(workspace) then
@@ -1169,7 +1218,10 @@ task.spawn(function()
                     espObjects[part] = nil
                 end
             end
-            for _, item in ipairs(refreshItemCache()) do applyESP(item.part, item.name) end
+            for _, item in ipairs(refreshItemCache()) do
+                if isShutdown or not _G.ItemESP then break end
+                applyESP(item.part, item.name)
+            end
         else
             clearESP()
         end
@@ -1252,6 +1304,7 @@ ToastList.HorizontalAlignment = Enum.HorizontalAlignment.Center
 ToastList.Parent              = ToastContainer
 
 local function showNotification(title, message, duration)
+    if isShutdown or not ToastContainer or not ToastContainer.Parent then return end
     duration = duration or 3
     local toast = Instance.new("Frame")
     toast.Size             = UDim2.new(1, 0, 0, 0)
@@ -1296,6 +1349,7 @@ local function showNotification(title, message, duration)
 
     task.delay(duration, function()
         pcall(function()
+            if isShutdown or not toast.Parent then return end
             TweenService:Create(toast,    TweenInfo.new(0.2), { Size = UDim2.new(1, 0, 0, 0) }):Play()
             TweenService:Create(stroke,   TweenInfo.new(0.2), { Transparency = 1 }):Play()
             TweenService:Create(titleLbl, TweenInfo.new(0.2), { TextTransparency = 1 }):Play()
@@ -1305,6 +1359,99 @@ local function showNotification(title, message, duration)
             toast:Destroy()
         end)
     end)
+end
+
+-- =======================================================
+-- ЄДИНА ФУНКЦІЯ ПОВНОГО ВИМКНЕННЯ СКРИПТА (SHUTDOWN)
+-- =======================================================
+local function shutdownScript()
+    if isShutdown then return end
+    isShutdown = true
+    print("[UA Killer Hub] Ініціалізація повного вимкнення скрипта (Shutdown)...")
+
+    -- 1. Скидання глобальних прапорців
+    _G.ItemFarm         = false
+    _G.AutoSell         = false
+    _G.AutoEventCandy   = false
+    _G.AutoBuy          = false
+    _G.ItemESP          = false
+    _G.AntiAFK          = false
+    _G.StandaloneNoClip = false
+    _G.AutoRespawn      = false
+
+    -- 2. Збільшення Session ID та скидання прапорців активності для обриву фонових циклів
+    farmSessionId        = farmSessionId + 1
+    farmThreadActive     = false
+    autoSellSessionId    = autoSellSessionId + 1
+    autoSellThreadActive = false
+    isBusy               = false
+
+    -- 3. Зупинка польотів, Tween та скидання інерції
+    pcall(stopFlight)
+    pcall(cleanupFlight)
+
+    -- 4. Очищення ESP та закриття відкритих діалогів
+    pcall(clearESP)
+    pcall(closeMerchantDialogue)
+
+    -- 5. Відключення виділених Connections
+    if noclipConnection then
+        pcall(function() noclipConnection:Disconnect() end)
+        noclipConnection = nil
+    end
+    if antiAfkConnection then
+        pcall(function() antiAfkConnection:Disconnect() end)
+        antiAfkConnection = nil
+    end
+
+    -- 6. Відключення всіх збережених Connections скрипта
+    for _, conn in ipairs(scriptConnections) do
+        pcall(function()
+            if conn and conn.Connected then
+                conn:Disconnect()
+            end
+        end)
+    end
+    table.clear(scriptConnections)
+
+    -- 7. Відновлення CanCollide персонажа та базового JumpPower
+    pcall(function()
+        local char = player.Character
+        if char then
+            for _, part in ipairs(char:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    part.CanCollide = true
+                end
+            end
+            local hrp = char:FindFirstChild("HumanoidRootPart")
+            if hrp then
+                hrp.AssemblyLinearVelocity  = Vector3.zero
+                hrp.AssemblyAngularVelocity = Vector3.zero
+            end
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if hum then
+                hum.JumpPower = 50
+            end
+        end
+    end)
+
+    -- 8. Очищення службових об'єктів у гравцеві
+    pcall(function()
+        for _, obj in ipairs(player:GetChildren()) do
+            if obj.Name == "YBA_VirtualCFrame" then
+                obj:Destroy()
+            end
+        end
+    end)
+
+    -- 9. Знищення інтерфейсу
+    pcall(function()
+        if ScreenGui then
+            ScreenGui:Destroy()
+        end
+    end)
+
+    print("[UA Killer Hub] Скрипт успішно та повністю вимкнено. Усі процеси завершено.")
 end
 
 -- Верхня панель
@@ -1364,45 +1511,62 @@ MinBtn.TextColor3       = Color3.fromRGB(160, 165, 175)
 Instance.new("UICorner", MinBtn).CornerRadius = UDim.new(0, 6)
 
 local dragging, dragInput, dragStart, startPos
-TitleBar.InputBegan:Connect(function(input)
+trackConnection(TitleBar.InputBegan:Connect(function(input)
+    if isShutdown then return end
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         dragging  = true
         dragStart = input.Position
         startPos  = MainFrame.Position
-        input.Changed:Connect(function()
-            if input.UserInputState == Enum.UserInputState.End then dragging = false end
+        local chConn
+        chConn = input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End or isShutdown then
+                dragging = false
+                if chConn then chConn:Disconnect() end
+            end
         end)
+        trackConnection(chConn)
     end
-end)
-TitleBar.InputChanged:Connect(function(input)
+end))
+
+trackConnection(TitleBar.InputChanged:Connect(function(input)
+    if isShutdown then return end
     if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
         dragInput = input
     end
-end)
-UserInputService.InputChanged:Connect(function(input)
+end))
+
+trackConnection(UserInputService.InputChanged:Connect(function(input)
+    if isShutdown then return end
     if input == dragInput and dragging then
         local delta = input.Position - dragStart
-        MainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        if MainFrame and MainFrame.Parent then
+            MainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
     end
-end)
+end))
 
 local isMinimized = false
 MinBtn.MouseButton1Click:Connect(function()
+    if isShutdown then return end
     isMinimized = not isMinimized
     local targetSize = isMinimized and UDim2.new(0, 520, 0, 42) or UDim2.new(0, 520, 0, 400)
     TweenService:Create(MainFrame, TweenInfo.new(0.25, Enum.EasingStyle.Quad), { Size = targetSize }):Play()
 end)
 
+-- Натискання на ✕ ПОВНІСТЮ ВИМИКАЄ СКРИПТ
 CloseBtn.MouseButton1Click:Connect(function()
-    MainFrame.Visible = false
-    showNotification("UA Killer Hub", "Натисніть RightShift, щоб відкрити знову", 3.5)
+    shutdownScript()
 end)
 
-UserInputService.InputBegan:Connect(function(input, gpe)
+-- Перемикання видимості через RightShift (працює тільки до Shutdown)
+trackConnection(UserInputService.InputBegan:Connect(function(input, gpe)
+    if isShutdown then return end
     if not gpe and input.KeyCode == Enum.KeyCode.RightShift then
-        MainFrame.Visible = not MainFrame.Visible
+        if MainFrame and MainFrame.Parent then
+            MainFrame.Visible = not MainFrame.Visible
+        end
     end
-end)
+end))
 
 -- Сайдбар
 local Sidebar = Instance.new("Frame", MainFrame)
@@ -1464,28 +1628,35 @@ local tabs      = {}
 local activeTab = nil
 
 local function filterItems(query)
+    if isShutdown then return end
     query = query:lower()
     for _, item in ipairs(uiElementsRegistry) do
-        if item.Page == activeTab then
+        if item.Page == activeTab and item.Frame and item.Frame.Parent then
             item.Frame.Visible = (query == "" or item.Name:lower():find(query, 1, true) ~= nil)
         end
     end
 end
 
-SearchBox:GetPropertyChangedSignal("Text"):Connect(function()
+trackConnection(SearchBox:GetPropertyChangedSignal("Text"):Connect(function()
+    if isShutdown then return end
     filterItems(SearchBox.Text)
-end)
+end))
 
 local function switchTab(tabName)
+    if isShutdown then return end
     activeTab    = tabName
     SearchBox.Text = ""
     for name, tabData in pairs(tabs) do
         local active = (name == tabName)
-        tabData.Page.Visible = active
-        TweenService:Create(tabData.Button, TweenInfo.new(0.2), {
-            BackgroundColor3 = active and Color3.fromRGB(139, 124, 246) or Color3.fromRGB(23, 25, 32),
-            TextColor3       = active and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(150, 155, 165),
-        }):Play()
+        if tabData.Page and tabData.Page.Parent then
+            tabData.Page.Visible = active
+        end
+        if tabData.Button and tabData.Button.Parent then
+            TweenService:Create(tabData.Button, TweenInfo.new(0.2), {
+                BackgroundColor3 = active and Color3.fromRGB(139, 124, 246) or Color3.fromRGB(23, 25, 32),
+                TextColor3       = active and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(150, 155, 165),
+            }):Play()
+        end
     end
     filterItems("")
 end
@@ -1524,7 +1695,7 @@ local function createTab(tabName, iconText)
     pad.PaddingBottom = UDim.new(0, 10)
 
     tabs[tabName] = { Button = btn, Page = page }
-    btn.MouseButton1Click:Connect(function() switchTab(tabName) end)
+    trackConnection(btn.MouseButton1Click:Connect(function() switchTab(tabName) end))
     return page
 end
 
@@ -1580,19 +1751,25 @@ local function createToggle(page, tabName, text, defaultVal, callback)
     Instance.new("UICorner", knob).CornerRadius = UDim.new(1, 0)
 
     local function setState(val, triggerCallback)
+        if isShutdown then return end
         toggleState = (val == true)
-        TweenService:Create(switch, TweenInfo.new(0.2), {
-            BackgroundColor3 = toggleState and Color3.fromRGB(139, 124, 246) or Color3.fromRGB(42, 46, 58),
-        }):Play()
-        TweenService:Create(knob, TweenInfo.new(0.2), {
-            Position = toggleState and UDim2.new(1, -17, 0.5, -7) or UDim2.new(0, 3, 0.5, -7),
-        }):Play()
-        if triggerCallback and callback then callback(toggleState) end
+        if switch.Parent then
+            TweenService:Create(switch, TweenInfo.new(0.2), {
+                BackgroundColor3 = toggleState and Color3.fromRGB(139, 124, 246) or Color3.fromRGB(42, 46, 58),
+            }):Play()
+        end
+        if knob.Parent then
+            TweenService:Create(knob, TweenInfo.new(0.2), {
+                Position = toggleState and UDim2.new(1, -17, 0.5, -7) or UDim2.new(0, 3, 0.5, -7),
+            }):Play()
+        end
+        if triggerCallback and callback and not isShutdown then callback(toggleState) end
     end
 
-    switch.MouseButton1Click:Connect(function()
+    trackConnection(switch.MouseButton1Click:Connect(function()
+        if isShutdown then return end
         setState(not toggleState, true)
-    end)
+    end))
 
     local controlObj = {
         Name  = text,
@@ -1653,6 +1830,7 @@ local function createSlider(page, tabName, text, min, max, step, defaultVal, cal
     local draggingSlider = false
 
     local function updateFromPos(x)
+        if isShutdown then return end
         local rel     = math.clamp((x - bar.AbsolutePosition.X) / bar.AbsoluteSize.X, 0, 1)
         local raw     = min + (max - min) * rel
         local stepped = math.floor(raw / step + 0.5) * step
@@ -1660,38 +1838,43 @@ local function createSlider(page, tabName, text, min, max, step, defaultVal, cal
         currentVal    = math.clamp(stepped, min, max)
         valLabel.Text = tostring(currentVal)
         fill.Size     = UDim2.new((currentVal - min) / (max - min), 0, 1, 0)
-        if callback then callback(currentVal) end
+        if callback and not isShutdown then callback(currentVal) end
     end
 
-    bar.InputBegan:Connect(function(input)
+    trackConnection(bar.InputBegan:Connect(function(input)
+        if isShutdown then return end
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
             draggingSlider = true
             updateFromPos(input.Position.X)
         end
-    end)
-    UserInputService.InputEnded:Connect(function(input)
+    end))
+
+    trackConnection(UserInputService.InputEnded:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
             draggingSlider = false
         end
-    end)
-    UserInputService.InputChanged:Connect(function(input)
+    end))
+
+    trackConnection(UserInputService.InputChanged:Connect(function(input)
+        if isShutdown then draggingSlider = false return end
         if draggingSlider and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
             updateFromPos(input.Position.X)
         end
-    end)
+    end))
 
     local controlObj = {
         Name  = text,
         Page  = tabName,
         Frame = card,
         Set   = function(self, val, triggerCallback)
+            if isShutdown then return end
             val = tonumber(val)
             if not val then return end
             if triggerCallback == nil then triggerCallback = true end
             currentVal    = math.clamp(val, min, max)
             valLabel.Text = tostring(currentVal)
             fill.Size     = UDim2.new((currentVal - min) / (max - min), 0, 1, 0)
-            if triggerCallback and callback then callback(currentVal) end
+            if triggerCallback and callback and not isShutdown then callback(currentVal) end
         end,
         Get   = function() return currentVal end,
     }
@@ -1714,18 +1897,22 @@ local function createButton(page, tabName, text, callback)
     btn.TextSize              = 12
     btn.TextColor3            = Color3.fromRGB(240, 242, 245)
 
-    btn.MouseEnter:Connect(function()
+    trackConnection(btn.MouseEnter:Connect(function()
+        if isShutdown then return end
         TweenService:Create(card, TweenInfo.new(0.15), { BackgroundColor3 = Color3.fromRGB(36, 40, 52) }):Play()
-    end)
-    btn.MouseLeave:Connect(function()
+    end))
+    trackConnection(btn.MouseLeave:Connect(function()
+        if isShutdown then return end
         TweenService:Create(card, TweenInfo.new(0.15), { BackgroundColor3 = Color3.fromRGB(28, 31, 39) }):Play()
-    end)
-    btn.MouseButton1Click:Connect(function()
+    end))
+    trackConnection(btn.MouseButton1Click:Connect(function()
+        if isShutdown then return end
         TweenService:Create(card, TweenInfo.new(0.08), { BackgroundColor3 = Color3.fromRGB(139, 124, 246) }):Play()
         task.wait(0.08)
+        if isShutdown then return end
         TweenService:Create(card, TweenInfo.new(0.15), { BackgroundColor3 = Color3.fromRGB(28, 31, 39) }):Play()
-        if callback then callback() end
-    end)
+        if callback and not isShutdown then callback() end
+    end))
 
     table.insert(uiElementsRegistry, { Name = text, Page = tabName, Frame = card })
     return btn
@@ -1752,7 +1939,7 @@ local function createStatusLabel(page, tabName, initialText)
     lbl.TextXAlignment        = Enum.TextXAlignment.Left
 
     table.insert(uiElementsRegistry, { Name = "Статус", Page = tabName, Frame = card })
-    return { Set = function(self, txt) lbl.Text = txt end }
+    return { Set = function(self, txt) if not isShutdown and lbl.Parent then lbl.Text = txt end end }
 end
 
 -- =======================================================
@@ -1782,11 +1969,11 @@ autoLoadToggle = createToggle(mainPage, "Головна", "Автозавант�
 end)
 
 createButton(mainPage, "Головна", "Завантажити конфіг вручну", function()
-    if loadCurrentConfig then loadCurrentConfig(false) end
+    if loadCurrentConfig and not isShutdown then loadCurrentConfig(false) end
 end)
 
 createButton(mainPage, "Головна", "Зберегти поточний конфіг", function()
-    if saveCurrentConfig then saveCurrentConfig() end
+    if saveCurrentConfig and not isShutdown then saveCurrentConfig() end
 end)
 
 createSection(mainPage, "Головна", "Характеристики")
@@ -1801,7 +1988,9 @@ createSection(farmPage, "Автофарм", "Основні параметри")
 
 local statusLabel = createStatusLabel(farmPage, "Автофарм", "Статус: Очікування...")
 task.spawn(function()
-    while task.wait(0.35) do
+    while not isShutdown do
+        task.wait(0.35)
+        if isShutdown then break end
         pcall(function() statusLabel:Set("Статус: " .. farmStatusText) end)
     end
 end)
@@ -1868,15 +2057,23 @@ autoCandyToggle = createToggle(shopPage, "Магазин", "Авто-здача 
 end)
 
 autoBuyToggle = createToggle(shopPage, "Магазин", "Автокупівля (Lucky Arrow)", _G.AutoBuy, function(value)
+    if isShutdown then return end
     manuallyChanged.AutoBuy = true
     _G.AutoBuy = value
     if value then
         task.spawn(function()
-            while _G.AutoBuy do
+            while _G.AutoBuy and not isShutdown do
                 local char   = player.Character
                 local remote = char and char:FindFirstChild("RemoteEvent")
-                if remote then remote:FireServer("PurchaseShopItem", { ItemName = "1x Lucky Arrow" }) end
-                task.wait(2.5 + math.random() * 1.5)
+                if remote and not isShutdown then
+                    remote:FireServer("PurchaseShopItem", { ItemName = "1x Lucky Arrow" })
+                end
+                local waitSec = 2.5 + math.random() * 1.5
+                local waited = 0
+                while waited < waitSec and _G.AutoBuy and not isShutdown do
+                    task.wait(0.2)
+                    waited = waited + 0.2
+                end
             end
         end)
     end
@@ -1886,11 +2083,16 @@ end)
 createSection(miscPage, "Інше", "Додаткові функції")
 
 antiAfkToggle = createToggle(miscPage, "Інше", "Anti-AFK", _G.AntiAFK, function(value)
+    if isShutdown then return end
     manuallyChanged.AntiAFK = true
     _G.AntiAFK = value
     if antiAfkConnection then antiAfkConnection:Disconnect() antiAfkConnection = nil end
-    if value then
+    if value and not isShutdown then
         antiAfkConnection = player.Idled:Connect(function()
+            if isShutdown then
+                if antiAfkConnection then antiAfkConnection:Disconnect() antiAfkConnection = nil end
+                return
+            end
             VirtualUser:CaptureController()
             VirtualUser:ClickButton2(Vector2.new())
         end)
@@ -1898,6 +2100,7 @@ antiAfkToggle = createToggle(miscPage, "Інше", "Anti-AFK", _G.AntiAFK, funct
 end)
 
 noclipToggle = createToggle(miscPage, "Інше", "NoClip (окремо від фарму)", _G.StandaloneNoClip, function(value)
+    if isShutdown then return end
     manuallyChanged.StandaloneNoClip = true
     _G.StandaloneNoClip = value
     if value then ensureNoClip()
@@ -1924,7 +2127,7 @@ print("[UA Killer Hub | GUI] Усі вкладки та елементи MonHub 
 -- СИСТЕМА КОНФІГУРАЦІЇ
 -- =======================================================
 local function readConfigFromDisk()
-    if not (readfile and isfile) then return nil, "readfile/isfile недоступні" end
+    if isShutdown or not (readfile and isfile) then return nil, "readfile/isfile недоступні" end
 
     local fileExists = false
     local ok = pcall(function() fileExists = isfile(configFile) end)
@@ -1942,6 +2145,7 @@ local function readConfigFromDisk()
 end
 
 saveCurrentConfig = function()
+    if isShutdown then return end
     if not writefile then
         showNotification("Помилка", "writefile не підтримується", 3)
         return
@@ -1985,6 +2189,7 @@ end
 
 -- Ручне синхронне завантаження
 loadCurrentConfig = function(isAutoLoad)
+    if isShutdown then return false end
     local data, errMsg = readConfigFromDisk()
     if not data then
         local msg = "Конфіг: " .. errMsg
@@ -1994,13 +2199,16 @@ loadCurrentConfig = function(isAutoLoad)
         return false
     end
 
+    if isShutdown then return false end
+
     -- Слайдери та фільтр предметів
     if data.JumpPower      and jumpPowerSlider      then jumpPowerSlider:Set(data.JumpPower, true) end
     if data.FlySpeed       and flySpeedSlider       then flySpeedSlider:Set(data.FlySpeed, true) end
     if data.PickupDistance and pickupDistanceSlider then pickupDistanceSlider:Set(data.PickupDistance, true) end
 
-    if type(data.SelectedItems) == "table" then
+    if type(data.SelectedItems) == "table" and not isShutdown then
         for itemName, state in pairs(data.SelectedItems) do
+            if isShutdown then return false end
             if _G.SelectedItems[itemName] ~= nil then
                 _G.SelectedItems[itemName] = state
                 if itemToggleControls[itemName] then itemToggleControls[itemName]:Set(state, false) end
@@ -2008,6 +2216,8 @@ loadCurrentConfig = function(isAutoLoad)
         end
         lastCacheRefresh = 0
     end
+
+    if isShutdown then return false end
 
     -- Перемикачі
     if data.ItemESP          ~= nil and itemEspToggle      then itemEspToggle:Set(data.ItemESP, false) _G.ItemESP = data.ItemESP end
@@ -2017,11 +2227,11 @@ loadCurrentConfig = function(isAutoLoad)
     if data.AutoEventCandy   ~= nil and autoCandyToggle    then autoCandyToggle:Set(data.AutoEventCandy, true) end
     if data.AutoBuy          ~= nil and autoBuyToggle      then autoBuyToggle:Set(data.AutoBuy, true) end
 
-    if data.AutoSell ~= nil then
+    if data.AutoSell ~= nil and not isShutdown then
         setAutoSellState(data.AutoSell == true)
     end
 
-    if data.ItemFarm ~= nil then
+    if data.ItemFarm ~= nil and not isShutdown then
         setItemFarmState(data.ItemFarm == true)
     end
 
@@ -2031,7 +2241,7 @@ loadCurrentConfig = function(isAutoLoad)
 end
 
 -- =======================================================
--- ПОЕТАПНЕ АВТОЗАВАНТАЖЕННЯ (15с затримка + 1с між кроками)
+-- ПОЕТАПНЕ АВТОЗАВАНТАЖЕННЯ З ПІДТРИМКОЮ SHUTDOWN
 -- =======================================================
 local AUTOLOAD_WAIT = 15
 local AUTOLOAD_STEP = 1.0
@@ -2039,25 +2249,37 @@ local AUTOLOAD_STEP = 1.0
 local function runSteppedAutoLoad()
     showNotification("Auto Load", string.format("Завантаження через %ds...", AUTOLOAD_WAIT), AUTOLOAD_WAIT - 1)
     print(string.format("[UA Killer Hub | AutoLoad] Очікування %d секунд перед завантаженням конфігу...", AUTOLOAD_WAIT))
-    task.wait(AUTOLOAD_WAIT)
+
+    -- Безпечне очікування: якщо під час 15 секунд натиснуто ✕, завантаження миттєво скасовується
+    local waitCount = 0
+    while waitCount < AUTOLOAD_WAIT and not isShutdown do
+        task.wait(1)
+        waitCount = waitCount + 1
+    end
+    if isShutdown then return end
 
     local data, errMsg = readConfigFromDisk()
-    if not data then
-        warn("[UA Killer Hub | AutoLoad] Не вдалося прочитати конфіг: " .. tostring(errMsg))
-        showNotification("Auto Load", "Помилка: конфіг не знайдено або пошкоджено", 4)
+    if not data or isShutdown then
+        if not isShutdown then
+            warn("[UA Killer Hub | AutoLoad] Не вдалося прочитати конфіг: " .. tostring(errMsg))
+            showNotification("Auto Load", "Помилка: конфіг не знайдено або пошкоджено", 4)
+        end
         return
     end
 
     print("[UA Killer Hub | AutoLoad] Початок поетапного відновлення налаштувань...")
     showNotification("Auto Load", "Відновлення налаштувань...", 3)
 
+    if isShutdown then return end
+
     -- 1. Слайдери та фільтр предметів
     if data.JumpPower      and jumpPowerSlider      then jumpPowerSlider:Set(data.JumpPower, true) end
     if data.FlySpeed       and flySpeedSlider       then flySpeedSlider:Set(data.FlySpeed, true) end
     if data.PickupDistance and pickupDistanceSlider then pickupDistanceSlider:Set(data.PickupDistance, true) end
 
-    if type(data.SelectedItems) == "table" then
+    if type(data.SelectedItems) == "table" and not isShutdown then
         for itemName, state in pairs(data.SelectedItems) do
+            if isShutdown then return end
             if _G.SelectedItems[itemName] ~= nil then
                 _G.SelectedItems[itemName] = state
                 if itemToggleControls[itemName] then itemToggleControls[itemName]:Set(state, false) end
@@ -2067,7 +2289,12 @@ local function runSteppedAutoLoad()
         print("[UA Killer Hub | AutoLoad] Слайдери та фільтр предметів відновлено.")
     end
 
-    task.wait(AUTOLOAD_STEP)
+    local stepWait = 0
+    while stepWait < AUTOLOAD_STEP and not isShutdown do
+        task.wait(0.2)
+        stepWait = stepWait + 0.2
+    end
+    if isShutdown then return end
 
     local steps = {
         {
@@ -2102,13 +2329,20 @@ local function runSteppedAutoLoad()
             activate = function(val)
                 _G.AutoBuy = (val == true)
                 if autoBuyToggle then autoBuyToggle:Set(_G.AutoBuy, false) end
-                if _G.AutoBuy then
+                if _G.AutoBuy and not isShutdown then
                     task.spawn(function()
-                        while _G.AutoBuy do
+                        while _G.AutoBuy and not isShutdown do
                             local char   = player.Character
                             local remote = char and char:FindFirstChild("RemoteEvent")
-                            if remote then remote:FireServer("PurchaseShopItem", { ItemName = "1x Lucky Arrow" }) end
-                            task.wait(2.5 + math.random() * 1.5)
+                            if remote and not isShutdown then
+                                remote:FireServer("PurchaseShopItem", { ItemName = "1x Lucky Arrow" })
+                            end
+                            local waitSec = 2.5 + math.random() * 1.5
+                            local waited = 0
+                            while waited < waitSec and _G.AutoBuy and not isShutdown do
+                                task.wait(0.2)
+                                waited = waited + 0.2
+                            end
                         end
                     end)
                 end
@@ -2151,14 +2385,20 @@ local function runSteppedAutoLoad()
 
     local totalSteps = #steps
     for i, step in ipairs(steps) do
+        if isShutdown then return end
         if manuallyChanged[step.key] then
             print(string.format("[UA Killer Hub | AutoLoad] Крок %d/%d — '%s' пропущено (ручна зміна гравцем).", i, totalSteps, step.label))
-            task.wait(AUTOLOAD_STEP)
+            local sw = 0
+            while sw < AUTOLOAD_STEP and not isShutdown do
+                task.wait(0.2)
+                sw = sw + 0.2
+            end
+            if isShutdown then return end
             continue
         end
 
         local savedVal = data[step.key]
-        if savedVal == true then
+        if savedVal == true and not isShutdown then
             print(string.format("[UA Killer Hub | AutoLoad] Крок %d/%d — '%s' увімкнено.", i, totalSteps, step.label))
             showNotification("Auto Load", string.format("(%d/%d) %s", i, totalSteps, step.label), AUTOLOAD_STEP + 0.5)
             step.activate(true)
@@ -2166,9 +2406,15 @@ local function runSteppedAutoLoad()
             print(string.format("[UA Killer Hub | AutoLoad] Крок %d/%d — '%s' збережено як false, пропускаємо.", i, totalSteps, step.label))
         end
 
-        task.wait(AUTOLOAD_STEP)
+        local sw = 0
+        while sw < AUTOLOAD_STEP and not isShutdown do
+            task.wait(0.2)
+            sw = sw + 0.2
+        end
+        if isShutdown then return end
     end
 
+    if isShutdown then return end
     print("[UA Killer Hub | AutoLoad] Поетапне відновлення завершено.")
     showNotification("Auto Load", "✓ Всі налаштування відновлено!", 4)
 end
@@ -2179,11 +2425,11 @@ end
 switchTab("Головна")
 print("[UA Killer Hub | Init] Інтерфейс відкрито та готовий до роботи!")
 
-if shouldAutoLoad then
+if shouldAutoLoad and not isShutdown then
     task.spawn(runSteppedAutoLoad)
 end
 
-if _G.AutoSell then
+if _G.AutoSell and not isShutdown then
     startAutoSellThread()
 end
 
