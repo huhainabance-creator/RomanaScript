@@ -1,4 +1,4 @@
--- UA Killer Hub | YBA — Версія з виправленим закриттям діалогу Halloween Event
+-- UA Killer Hub | YBA — Версія з паралельним Farm та ізольованим циклом AutoSell (100с Snapshot)
 print("[UA Killer Hub | Init] Початок запуску скрипта...")
 
 if not game:IsLoaded() then
@@ -488,7 +488,6 @@ local function moveToItemAndPickup(item)
 
     if not shouldContinue() then cleanupFlight() return false end
 
-    -- Фіксуємо стан інвентарю перед взаємодією для точного підтвердження
     local backpack = player:FindFirstChild("Backpack")
     local initialBackpackCount = backpack and #backpack:GetChildren() or 0
     local initialCharTools = 0
@@ -507,7 +506,6 @@ local function moveToItemAndPickup(item)
         fireproximityprompt(item.prompt, 0)
     end
 
-    -- Достовірна перевірка результату підбору з вимірюванням затримки
     local confirmed = false
     local maxWait = 0.75
     local checkStart = os.clock()
@@ -668,8 +666,7 @@ local EventCandies = {
     ["Blue Candy"]  = true, ["Red Candy"]    = true,
 }
 
-local sellQueue = {}
-local isBusy    = false
+local isBusy = false
 
 local function getMerchant()
     local d = ReplicatedStorage:FindFirstChild("Dialogue")
@@ -687,7 +684,6 @@ local function getDialogueGui()
     return pg:FindFirstChild("DialogueGui") or pg:FindFirstChild("Dialogue") or pg:FindFirstChild("DialogueBox")
 end
 
--- Перевірка фактичної видимості GUI-елемента на екрані
 local function isGuiElementVisible(elem)
     if not elem or not elem:IsA("GuiObject") then return false end
     if not elem.Visible then return false end
@@ -805,6 +801,10 @@ local function sellSingleItem(item)
     end)
     task.wait(0.1)
 
+    if not isItemSold(item) and hum then
+        pcall(function() hum:UnequipTools() end)
+    end
+
     return isItemSold(item), isItemSold(item) and "Success" or "ItemStillExists"
 end
 
@@ -821,59 +821,121 @@ local function sellSingleItemWithRetries(item, maxRetries)
     return false, lastError
 end
 
-local function isItemInQueue(item)
-    for _, q in ipairs(sellQueue) do if q == item then return true end end
-    return false
-end
+-- =======================================================
+-- СИСТЕМА ФІКСОВАНОГО ЗНІМКА (SNAPSHOT) ТА ЦИКЛУ ПРОДАЖУ
+-- =======================================================
+local autoSellToggle       = nil
+local autoSellThreadActive = false
+local autoSellSessionId    = 0
+local FARM_CYCLE_DURATION  = 100 -- 100 секунд фарму перед кожним продажем
 
-local function queueItemForSale(item)
-    if not item or not item:IsA("Tool") or DontSell[item.Name] then return end
-    if isItemSold(item) or isItemInQueue(item) then return end
-    table.insert(sellQueue, item)
-end
+-- Фіксація знімка предметів строго на момент завершення 100 секунд
+local function getSellableSnapshot()
+    local snapshot = {}
+    local seen = {}
 
-local function syncSellQueue()
-    local backpack = player:FindFirstChild("Backpack")
-    if backpack then
-        for _, item in ipairs(backpack:GetChildren()) do queueItemForSale(item) end
-    end
-    local char = player.Character
-    if char then
-        for _, item in ipairs(char:GetChildren()) do
-            if item:IsA("Tool") and not DontSell[item.Name] then queueItemForSale(item) end
+    local function collect(container)
+        if not container then return end
+        for _, item in ipairs(container:GetChildren()) do
+            if item:IsA("Tool") and not DontSell[item.Name] and not isItemSold(item) and not seen[item] then
+                seen[item] = true
+                table.insert(snapshot, item)
+            end
         end
     end
+
+    collect(player:FindFirstChild("Backpack"))
+    collect(player.Character)
+    return snapshot
 end
 
-local function hasSellableItems()
-    local backpack = player:FindFirstChild("Backpack")
-    if backpack then
-        for _, item in ipairs(backpack:GetChildren()) do
-            if item:IsA("Tool") and not DontSell[item.Name] then return true end
-        end
-    end
-    local char = player.Character
-    if char then
-        for _, item in ipairs(char:GetChildren()) do
-            if item:IsA("Tool") and not DontSell[item.Name] then return true end
-        end
-    end
-    return false
-end
+local function startAutoSellThread()
+    if autoSellThreadActive then return end
+    autoSellThreadActive = true
+    autoSellSessionId    = autoSellSessionId + 1
+    local currentSession = autoSellSessionId
 
-local function setupBackpackListener(backpack)
-    for _, item in ipairs(backpack:GetChildren()) do queueItemForSale(item) end
-    backpack.ChildAdded:Connect(function(item)
-        task.wait(0.2)
-        if _G.AutoSell then queueItemForSale(item) end
+    task.spawn(function()
+        print(string.format("[UA Killer Hub | AutoSell] Потік запущено. Фарм триває %d с перед першим продажем...", FARM_CYCLE_DURATION))
+
+        while _G.AutoSell and autoSellThreadActive and (autoSellSessionId == currentSession) do
+            -- 1. Таймер 100 секунд, під час якого Farm спокійно збирає предмети в інвентар
+            local elapsed = 0
+            while elapsed < FARM_CYCLE_DURATION and _G.AutoSell and (autoSellSessionId == currentSession) do
+                task.wait(1)
+                elapsed = elapsed + 1
+            end
+
+            if not _G.AutoSell or (autoSellSessionId ~= currentSession) then break end
+
+            -- Чекаємо звільнення від інших діалогів (наприклад, здачі цукерок), щоб не конфліктувати
+            while isBusy and _G.AutoSell and (autoSellSessionId == currentSession) do
+                task.wait(0.2)
+            end
+
+            if not _G.AutoSell or (autoSellSessionId ~= currentSession) then break end
+
+            isBusy = true
+
+            -- 2. Створюємо ізольований snapshot предметів, які вже є в інвентарі.
+            -- Нові предмети, які збираються під час продажу, не потрапляють у цей список.
+            local snapshot = getSellableSnapshot()
+
+            if #snapshot > 0 then
+                print(string.format("[UA Killer Hub | AutoSell] Створено snapshot: %d предметів. Початок продажу (Farm працює паралельно)...", #snapshot))
+                for _, item in ipairs(snapshot) do
+                    if not _G.AutoSell or (autoSellSessionId ~= currentSession) then break end
+                    if not isItemSold(item) and not DontSell[item.Name] then
+                        sellSingleItemWithRetries(item, 3)
+                        task.wait(0.15)
+                    end
+                end
+                closeMerchantDialogue()
+                print("[UA Killer Hub | AutoSell] Продаж поточного snapshot повністю завершено!")
+            else
+                print("[UA Killer Hub | AutoSell] Snapshot порожній: предметів для продажу немає.")
+            end
+
+            isBusy = false
+
+            -- 6. Коли продаж завершився, автоматично запускається наступний цикл на 100 секунд
+            if _G.AutoSell and (autoSellSessionId == currentSession) then
+                print(string.format("[UA Killer Hub | AutoSell] Запуск наступного 100-секундного циклу фарму.", FARM_CYCLE_DURATION))
+            end
+        end
+
+        if autoSellSessionId == currentSession then
+            autoSellThreadActive = false
+            isBusy               = false
+            closeMerchantDialogue()
+            print("[UA Killer Hub | AutoSell] Потік автопродажу повністю зупинено.")
+        end
     end)
 end
 
-player.ChildAdded:Connect(function(child)
-    if child.Name == "Backpack" then setupBackpackListener(child) end
-end)
-if player:FindFirstChild("Backpack") then setupBackpackListener(player.Backpack) end
+local function setAutoSellState(enabled)
+    _G.AutoSell = (enabled == true)
 
+    if autoSellToggle and autoSellToggle:Get() ~= _G.AutoSell then
+        autoSellToggle:Set(_G.AutoSell, false)
+    end
+
+    if _G.AutoSell then
+        startAutoSellThread()
+    else
+        autoSellSessionId    = autoSellSessionId + 1
+        autoSellThreadActive = false
+        isBusy               = false
+        closeMerchantDialogue()
+    end
+
+    print(string.format("[UA Killer Hub | AutoSell] Стан синхронізовано: _G.AutoSell=%s, Active=%s",
+        tostring(_G.AutoSell), tostring(autoSellThreadActive)))
+end
+
+-- ====================
+-- ЛОГІКА ХЕЛОВІНСЬКИХ ЦУКЕРОК
+-- ====================
 local function countTotalCandies()
     local backpack = player:FindFirstChild("Backpack")
     if not backpack then return 0 end
@@ -905,7 +967,6 @@ local function clickEventCandyOption()
     return false
 end
 
--- Надійне визначення активного діалогового вікна Jack із перевіркою видимості
 local function findJackDialogue()
     local gui = getDialogueGui()
     if not gui then return nil end
@@ -965,43 +1026,15 @@ local function findJackDialogue()
     return nil
 end
 
--- Автоматичне закриття діалогу через штатну взаємодію з інтерфейсом
 local function clickContinueButton(jackData)
     if not jackData then return end
 
-    -- Повна діагностика знайдених елементів
-    print("[UA Killer Hub | Event] Діагностика GUI-елементів діалогу Jack:")
-    if jackData.pointsElem then
-        print(string.format("  • [PointsLabel] Class: %s | Name: '%s' | Text: '%s' | Pos: (%d, %d) | Size: (%d, %d)",
-            jackData.pointsElem.ClassName, jackData.pointsElem.Name, jackData.pointsElem.Text,
-            jackData.pointsElem.AbsolutePosition.X, jackData.pointsElem.AbsolutePosition.Y,
-            jackData.pointsElem.AbsoluteSize.X, jackData.pointsElem.AbsoluteSize.Y))
-    end
-    if jackData.continueElem then
-        print(string.format("  • [ContinueElem] Class: %s | Name: '%s' | Text: '%s' | Pos: (%d, %d) | Size: (%d, %d)",
-            jackData.continueElem.ClassName, jackData.continueElem.Name, jackData.continueElem.Text,
-            jackData.continueElem.AbsolutePosition.X, jackData.continueElem.AbsolutePosition.Y,
-            jackData.continueElem.AbsoluteSize.X, jackData.continueElem.AbsoluteSize.Y))
-    end
-    if jackData.dialogueBox then
-        print(string.format("  • [DialogueBox] Class: %s | Name: '%s' | Pos: (%d, %d) | Size: (%d, %d)",
-            jackData.dialogueBox.ClassName, jackData.dialogueBox.Name,
-            jackData.dialogueBox.AbsolutePosition.X, jackData.dialogueBox.AbsolutePosition.Y,
-            jackData.dialogueBox.AbsoluteSize.X, jackData.dialogueBox.AbsoluteSize.Y))
-    end
-    if jackData.anyButton then
-        print(string.format("  • [FoundButton] Class: %s | Name: '%s' | Text: '%s'",
-            jackData.anyButton.ClassName, jackData.anyButton.Name, tostring(jackData.anyButton.Text or "")))
-    end
-
     pcall(function()
-        -- 1. Якщо елемент мітки чи її батьківський контейнер є кнопкою — викликаємо штатні сигнали
         local targetBtn = (jackData.continueElem and jackData.continueElem:IsA("GuiButton") and jackData.continueElem)
             or (jackData.continueElem and jackData.continueElem.Parent and jackData.continueElem.Parent:IsA("GuiButton") and jackData.continueElem.Parent)
             or jackData.anyButton
 
         if targetBtn then
-            print("[UA Killer Hub | Event] Виклик сигналу кнопки: " .. targetBtn.Name)
             if firesignal then
                 firesignal(targetBtn.MouseButton1Click)
                 firesignal(targetBtn.Activated)
@@ -1010,7 +1043,6 @@ local function clickContinueButton(jackData)
             end
         end
 
-        -- 2. Штатний клік мишкою по центру чорного діалогового вікна (де розташований текст і де клікає гравець)
         local targetBox = jackData.dialogueBox or (jackData.pointsElem and jackData.pointsElem.Parent) or jackData.pointsElem
         if VirtualInputManager and targetBox and targetBox:IsA("GuiObject") then
             local absPos = targetBox.AbsolutePosition
@@ -1018,13 +1050,11 @@ local function clickContinueButton(jackData)
             local clickX = absPos.X + absSize.X / 2
             local clickY = absPos.Y + absSize.Y / 2
 
-            print(string.format("[UA Killer Hub | Event] Клік мишкою по центру рамки діалогу: (%d, %d)", math.floor(clickX), math.floor(clickY)))
             VirtualInputManager:SendMouseButtonEvent(clickX, clickY, 0, true, game, 0)
             task.wait(0.08)
             VirtualInputManager:SendMouseButtonEvent(clickX, clickY, 0, false, game, 0)
         end
 
-        -- 3. Додатковий клік по центру тексту Continue (якщо він окремий від головної рамки)
         if VirtualInputManager and jackData.continueElem and jackData.continueElem:IsA("GuiObject") and jackData.continueElem ~= targetBox then
             local absPos = jackData.continueElem.AbsolutePosition
             local absSize = jackData.continueElem.AbsoluteSize
@@ -1046,7 +1076,6 @@ local function submitAllCandies()
 
     local success = false
     pcall(function()
-        print("[UA Killer Hub | Event] Взаємодія з Jack...")
         remote:FireServer("PromptTriggered", eventNPC)
 
         local optionFound   = false
@@ -1055,12 +1084,8 @@ local function submitAllCandies()
             if clickEventCandyOption() then optionFound = true break end
             task.wait(0.15)
         end
-        if not optionFound then
-            print("[UA Killer Hub | Event] Меню здачі цукерок не з'явилося.")
-            return
-        end
+        if not optionFound then return end
 
-        print("[UA Killer Hub | Event] Очікування повідомлення про отримані очки...")
         local pointsFound   = false
         local jackData      = nil
         local pointsTimeout = tick() + 4.0
@@ -1068,23 +1093,15 @@ local function submitAllCandies()
             jackData = findJackDialogue()
             if jackData and jackData.hasPoints then
                 pointsFound = true
-                local msgText = jackData.pointsElem and jackData.pointsElem.Text or "Очки отримано"
-                print(string.format("[UA Killer Hub | Event] Отримано підтвердження: '%s'", msgText))
                 break
             end
             task.wait(0.15)
         end
-        if not pointsFound or not jackData then
-            print("[UA Killer Hub | Event] Повідомлення про очки не з'явилося (таймаут).")
-            return
-        end
+        if not pointsFound or not jackData then return end
 
         task.wait(0.35)
-
-        -- Спроба закриття через визначені елементи
         clickContinueButton(jackData)
 
-        -- Перевірка моменту закриття діалогу
         local closeTimeout = tick() + 2.0
         local isClosed     = false
         while tick() < closeTimeout do
@@ -1096,28 +1113,23 @@ local function submitAllCandies()
         end
 
         if isClosed then
-            print("[UA Killer Hub | Event] Діалог Jack успішно закрито!")
             success = true
         else
-            print("[UA Killer Hub | Event] Діалог ще відкритий, виконуємо повторний клік...")
             local retryData = findJackDialogue()
             if retryData then
                 clickContinueButton(retryData)
                 task.wait(0.3)
-                if not findJackDialogue() then
-                    print("[UA Killer Hub | Event] Діалог Jack успішно закрито після повторного кліку!")
-                    success = true
-                end
+                if not findJackDialogue() then success = true end
             end
         end
     end)
     return success
 end
 
--- Головний потік продажів та цукерок
+-- Автономний потік здачі цукерок (ізольований, не блокує Farm та узгоджений із Sell через isBusy)
 task.spawn(function()
     while true do
-        task.wait(0.3)
+        task.wait(0.5)
         if isBusy then continue end
 
         if _G.AutoEventCandy and countTotalCandies() >= 10 then
@@ -1128,21 +1140,6 @@ task.spawn(function()
                 task.wait(0.5)
             end
             isBusy = false
-            continue
-        end
-
-        if _G.AutoSell and (#sellQueue > 0 or hasSellableItems()) then
-            isBusy = true
-            syncSellQueue()
-            while _G.AutoSell and #sellQueue > 0 do
-                local item = table.remove(sellQueue, 1)
-                if item and not isItemSold(item) and not DontSell[item.Name] then
-                    sellSingleItemWithRetries(item, 3)
-                    task.wait(0.15)
-                end
-            end
-            closeMerchantDialogue()
-            isBusy = false
         end
     end
 end)
@@ -1152,25 +1149,11 @@ local function applyJumpPower()
     if hum then hum.JumpPower = JP_Value end
 end
 
+-- Чисте оновлення при респавні персонажа
 player.CharacterAdded:Connect(function(newChar)
     task.wait(0.5)
     applyJumpPower()
-    newChar.ChildAdded:Connect(function(item)
-        task.wait(0.2)
-        if _G.AutoSell and item:IsA("Tool") and not DontSell[item.Name] then
-            queueItemForSale(item)
-        end
-    end)
 end)
-
-if player.Character then
-    player.Character.ChildAdded:Connect(function(item)
-        task.wait(0.2)
-        if _G.AutoSell and item:IsA("Tool") and not DontSell[item.Name] then
-            queueItemForSale(item)
-        end
-    end)
-end
 
 task.spawn(function()
     while task.wait(0.2) do applyJumpPower() end
@@ -1781,7 +1764,7 @@ local shopPage = createTab("Магазин",  "🛒")
 local miscPage = createTab("Інше",     "⚙")
 
 local autoLoadToggle, jumpPowerSlider, flySpeedSlider, pickupDistanceSlider
-local itemEspToggle, autoSellToggle, autoCandyToggle
+local itemEspToggle, autoCandyToggle
 local autoBuyToggle, antiAfkToggle, noclipToggle, autoRespawnToggle
 local itemToggleControls = {}
 
@@ -1836,7 +1819,6 @@ itemEspToggle = createToggle(farmPage, "Автофарм", "Увімкнути E
     _G.ItemESP = val
 end)
 
--- Ініціалізація перемикача ItemFarm через єдиний контролер
 itemFarmToggle = createToggle(farmPage, "Автофарм", "Увімкнути автофарм", _G.ItemFarm, function(value)
     manuallyChanged.ItemFarm = true
     setItemFarmState(value)
@@ -1875,11 +1857,9 @@ end
 -- ── Магазин ──────────────────────────────────────────────
 createSection(shopPage, "Магазин", "Торгівля та івенти")
 
-autoSellToggle = createToggle(shopPage, "Магазин", "Автопродаж (крім Lucky Arrow)", _G.AutoSell, function(value)
+autoSellToggle = createToggle(shopPage, "Магазин", "Автопродаж (100с Farm -> Sell)", _G.AutoSell, function(value)
     manuallyChanged.AutoSell = true
-    _G.AutoSell = value
-    if value then syncSellQueue()
-    else table.clear(sellQueue) closeMerchantDialogue() end
+    setAutoSellState(value)
 end)
 
 autoCandyToggle = createToggle(shopPage, "Магазин", "Авто-здача конфет (Halloween Event)", _G.AutoEventCandy, function(value)
@@ -2034,9 +2014,12 @@ loadCurrentConfig = function(isAutoLoad)
     if data.AntiAFK          ~= nil and antiAfkToggle      then antiAfkToggle:Set(data.AntiAFK, true) end
     if data.AutoRespawn      ~= nil and autoRespawnToggle  then autoRespawnToggle:Set(data.AutoRespawn, true) end
     if data.StandaloneNoClip ~= nil and noclipToggle       then noclipToggle:Set(data.StandaloneNoClip, true) end
-    if data.AutoSell         ~= nil and autoSellToggle     then autoSellToggle:Set(data.AutoSell, true) end
     if data.AutoEventCandy   ~= nil and autoCandyToggle    then autoCandyToggle:Set(data.AutoEventCandy, true) end
     if data.AutoBuy          ~= nil and autoBuyToggle      then autoBuyToggle:Set(data.AutoBuy, true) end
+
+    if data.AutoSell ~= nil then
+        setAutoSellState(data.AutoSell == true)
+    end
 
     if data.ItemFarm ~= nil then
         setItemFarmState(data.ItemFarm == true)
@@ -2100,9 +2083,7 @@ local function runSteppedAutoLoad()
             control = autoSellToggle,
             label   = "Автопродаж",
             activate = function(val)
-                _G.AutoSell = (val == true)
-                if autoSellToggle then autoSellToggle:Set(_G.AutoSell, false) end
-                if _G.AutoSell then syncSellQueue() end
+                setAutoSellState(val == true)
             end,
         },
         {
@@ -2200,6 +2181,10 @@ print("[UA Killer Hub | Init] Інтерфейс відкрито та гото�
 
 if shouldAutoLoad then
     task.spawn(runSteppedAutoLoad)
+end
+
+if _G.AutoSell then
+    startAutoSellThread()
 end
 
 showNotification("UA Killer Hub", "Завантажено успішно! (RightShift — сховати)", 4)
