@@ -1,6 +1,6 @@
 -- ====================================================================
--- UA Killer Hub | YBA — Safe & Fast AutoFarm (No-Kick Edition)
--- Реактивний автофарм без кіків + 100с Snapshot AutoSell + Shutdown
+-- UA Killer Hub | YBA — Methion Instant SafeZone Farm & AutoSell (No-Kick Edition)
+-- Інстант фарм через SafeZone Decoy (як у Methion 1.txt) + 100с Snapshot AutoSell + Shutdown
 -- ====================================================================
 print("[UA Killer Hub | Init] Початок запуску скрипта...")
 
@@ -99,6 +99,7 @@ _G.AutoSell        = false
 _G.AutoEventCandy  = false
 _G.AutoBuy         = false
 _G.ItemFarm        = false
+_G.InstantFarm     = true -- Інстант-фарм через SafeZone телепортацію з 1.txt (без кіків)
 _G.ItemESP         = false
 _G.FlySpeed        = 180 -- Безпечна та швидка швидкість польоту (не викликає кік)
 _G.AntiAFK         = false
@@ -191,6 +192,31 @@ local function zeroHrpVelocity(hrp)
         hrp.AssemblyAngularVelocity = Vector3.zero
     end)
 end
+
+-- =======================================================
+-- БЕЗПЕЧНЕ РОЗВАНТАЖЕННЯ ІНВЕНТАРЯ ТА SAFEZONE (METHION)
+-- =======================================================
+local SafeZone = Vector3.new(-212.241150, -33.486183, -283.842651)
+
+local function forceUnequipAllTools()
+    pcall(function()
+        local char, _, hum = getCharacter()
+        if hum then
+            pcall(function() hum:UnequipTools() end)
+        end
+        local bp = player:FindFirstChild("Backpack")
+        if char and bp then
+            for _, child in ipairs(char:GetChildren()) do
+                if child:IsA("Tool") then
+                    pcall(function() child.Parent = bp end)
+                end
+            end
+        end
+    end)
+end
+
+-- Початкове очищення руки від предметів, щоб не з'являлася кнопка DROP
+pcall(forceUnequipAllTools)
 
 local function cleanupFlight()
     if not flightState then return end
@@ -583,6 +609,376 @@ local function flyToItem(targetPart, speed, shouldContinue)
     return false
 end
 
+-- =======================================================
+-- METHION TELEPORT & SAFEZONE DECOY SYSTEM (З 1.TXT)
+-- =======================================================
+local Move = {}
+
+function Move.telePart(part)
+    if not part or not part.Parent or not part:IsDescendantOf(workspace) then return false end
+    local char, hrp = getCharacter()
+    if not hrp then return false end
+    hrp.CFrame = CFrame.new(part.Position + Vector3.new(0, 3, 0))
+    zeroHrpVelocity(hrp)
+    return true
+end
+
+function Move.teleSafe()
+    local char, hrp = getCharacter()
+    if not hrp then return false end
+    hrp.CFrame = CFrame.new(SafeZone)
+    zeroHrpVelocity(hrp)
+    return true
+end
+
+local function moveToSafeIfNeeded()
+    local char, hrp = getCharacter()
+    if hrp and (hrp.Position - SafeZone).Magnitude > 6 then
+        return Move.teleSafe()
+    end
+    return hrp ~= nil
+end
+
+local FarmVisual = {
+    OriginalVisuals = setmetatable({}, {__mode = "k"}),
+    AnimationMap = setmetatable({}, {__mode = "k"}),
+    DecoyUpdateConnection = nil,
+    FallbackWalkTrack = nil,
+    FallbackWalkAnimation = nil,
+    CameraBindBefore = "UA_Farm_Decoy_Camera_Before",
+    CameraBindAfter = "UA_Farm_Decoy_Camera_After",
+}
+
+local function hideFarmVisual(instance)
+    if not instance or not instance.Parent then return end
+    -- ВАЖЛИВО: Інструменти та предмети в інвентарі ніколи не чіпаємо, щоб не блокувати інвентар!
+    if instance:IsA("Tool") or instance:FindFirstAncestorWhichIsA("Tool") then
+        return
+    end
+    if instance:IsA("BasePart") then
+        if FarmVisual.OriginalVisuals[instance] == nil then
+            FarmVisual.OriginalVisuals[instance] = {
+                Kind = "BasePart",
+                LocalTransparencyModifier = instance.LocalTransparencyModifier,
+                Transparency = instance.Transparency,
+            }
+        end
+        pcall(function()
+            instance.LocalTransparencyModifier = 1
+            instance.Transparency = 1
+        end)
+    elseif instance:IsA("Decal") or instance:IsA("Texture") then
+        if FarmVisual.OriginalVisuals[instance] == nil then
+            FarmVisual.OriginalVisuals[instance] = {
+                Kind = "Texture",
+                Transparency = instance.Transparency,
+            }
+        end
+        pcall(function() instance.Transparency = 1 end)
+    end
+end
+
+function FarmVisual.isActive()
+    return FarmVisual.Character == player.Character
+        and FarmVisual.Decoy ~= nil
+        and FarmVisual.Decoy.Parent ~= nil
+        and FarmVisual.DecoyHumanoid ~= nil
+        and FarmVisual.DecoyHumanoid.Parent ~= nil
+end
+
+function FarmVisual.cleanup()
+    pcall(function()
+        RunService:UnbindFromRenderStep(FarmVisual.CameraBindBefore)
+        RunService:UnbindFromRenderStep(FarmVisual.CameraBindAfter)
+    end)
+
+    if FarmVisual.CharacterConnection then
+        pcall(function() FarmVisual.CharacterConnection:Disconnect() end)
+        FarmVisual.CharacterConnection = nil
+    end
+    if FarmVisual.DecoyUpdateConnection then
+        pcall(function() FarmVisual.DecoyUpdateConnection:Disconnect() end)
+        FarmVisual.DecoyUpdateConnection = nil
+    end
+    for _, entry in pairs(FarmVisual.AnimationMap or {}) do
+        if type(entry) == "table" then
+            if entry.Track then
+                pcall(function() entry.Track:Stop(0) end)
+                pcall(function() entry.Track:Destroy() end)
+            end
+            if entry.Animation then
+                pcall(function() entry.Animation:Destroy() end)
+            end
+        end
+    end
+    FarmVisual.AnimationMap = setmetatable({}, {__mode = "k"})
+    if FarmVisual.FallbackWalkTrack then
+        pcall(function() FarmVisual.FallbackWalkTrack:Stop(0) end)
+        pcall(function() FarmVisual.FallbackWalkTrack:Destroy() end)
+        FarmVisual.FallbackWalkTrack = nil
+    end
+    if FarmVisual.FallbackWalkAnimation then
+        pcall(function() FarmVisual.FallbackWalkAnimation:Destroy() end)
+        FarmVisual.FallbackWalkAnimation = nil
+    end
+
+    for instance, saved in pairs(FarmVisual.OriginalVisuals or {}) do
+        if instance and instance.Parent and type(saved) == "table" then
+            pcall(function()
+                if saved.Kind == "BasePart" then
+                    instance.LocalTransparencyModifier = saved.LocalTransparencyModifier
+                    instance.Transparency = saved.Transparency
+                elseif saved.Kind == "Texture" then
+                    instance.Transparency = saved.Transparency
+                end
+            end)
+        end
+    end
+    FarmVisual.OriginalVisuals = setmetatable({}, {__mode = "k"})
+
+    local wasActive = FarmVisual.Decoy ~= nil
+    local previousSubject = FarmVisual.PreviousCameraSubject
+    local previousCameraType = FarmVisual.PreviousCameraType
+    local decoy = FarmVisual.Decoy
+
+    FarmVisual.Character = nil
+    FarmVisual.Decoy = nil
+    FarmVisual.DecoyHumanoid = nil
+    FarmVisual.DecoyRoot = nil
+    FarmVisual.PreviousCameraSubject = nil
+    FarmVisual.PreviousCameraType = nil
+
+    if decoy then
+        pcall(function() decoy:Destroy() end)
+    end
+
+    if wasActive then
+        local camera = workspace.CurrentCamera
+        local char = player.Character
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        if camera then
+            pcall(function()
+                camera.CameraType = previousCameraType or Enum.CameraType.Custom
+                local subject = hum or previousSubject
+                if subject and subject.Parent then
+                    camera.CameraSubject = subject
+                end
+            end)
+        end
+    end
+end
+
+function FarmVisual.showSafeZoneDecoy()
+    local char = player.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if not char or not root or not hum then return false end
+    if FarmVisual.isActive() then return true end
+
+    FarmVisual.cleanup()
+
+    local wasArchivable = char.Archivable
+    local ok, decoy
+    pcall(function() char.Archivable = true end)
+    ok, decoy = pcall(function() return char:Clone() end)
+    pcall(function() char.Archivable = wasArchivable end)
+    if not ok or not decoy or not decoy:IsA("Model") then
+        return false
+    end
+
+    decoy.Name = "UA_FarmSafeZoneDecoy"
+    local decoyRoot = decoy:FindFirstChild("HumanoidRootPart")
+    local decoyHumanoid = decoy:FindFirstChildOfClass("Humanoid")
+    if not decoyRoot or not decoyHumanoid then
+        pcall(function() decoy:Destroy() end)
+        return false
+    end
+
+    for _, descendant in ipairs(decoy:GetDescendants()) do
+        if descendant:IsA("Script") or descendant:IsA("LocalScript") or descendant:IsA("ModuleScript")
+            or descendant:IsA("Trail") or descendant:IsA("Beam") or descendant:IsA("ParticleEmitter")
+            or descendant:IsA("Fire") or descendant:IsA("Smoke") or descendant:IsA("Sparkles") then
+            pcall(function() descendant:Destroy() end)
+        elseif descendant:IsA("BasePart") then
+            pcall(function()
+                descendant.LocalTransparencyModifier = 0
+                descendant.Anchored = descendant == decoyRoot
+                descendant.CanCollide = false
+                descendant.CanTouch = false
+                descendant.CanQuery = false
+                descendant.Massless = descendant ~= decoyRoot
+            end)
+        end
+    end
+
+    pcall(function()
+        decoyHumanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+        decoyHumanoid.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOff
+        decoyHumanoid.BreakJointsOnDeath = false
+        decoyHumanoid.AutoRotate = false
+        decoyHumanoid.PlatformStand = false
+        decoyHumanoid.Sit = false
+        decoyHumanoid.WalkSpeed = hum.WalkSpeed
+        decoyHumanoid.JumpPower = hum.JumpPower
+        decoyHumanoid.UseJumpPower = hum.UseJumpPower
+    end)
+
+    local safeRootCFrame = CFrame.new(SafeZone) * root.CFrame.Rotation
+    local pivotOffset = root.CFrame:ToObjectSpace(char:GetPivot())
+    decoy.Parent = workspace
+    decoy:PivotTo(safeRootCFrame * pivotOffset)
+
+    FarmVisual.Character = char
+    FarmVisual.Decoy = decoy
+    FarmVisual.DecoyHumanoid = decoyHumanoid
+    FarmVisual.DecoyRoot = decoyRoot
+    FarmVisual.AnimationMap = setmetatable({}, {__mode = "k"})
+    FarmVisual.OriginalVisuals = setmetatable({}, {__mode = "k"})
+
+    for _, descendant in ipairs(char:GetDescendants()) do
+        hideFarmVisual(descendant)
+    end
+
+    FarmVisual.CharacterConnection = char.DescendantAdded:Connect(function(descendant)
+        if FarmVisual.Character == char and FarmVisual.Decoy == decoy then
+            hideFarmVisual(descendant)
+        end
+    end)
+
+    local camera = workspace.CurrentCamera
+    if camera then
+        FarmVisual.PreviousCameraSubject = camera.CameraSubject
+        FarmVisual.PreviousCameraType = camera.CameraType
+        pcall(function()
+            camera.CameraType = Enum.CameraType.Custom
+            camera.CameraSubject = decoyHumanoid
+        end)
+    end
+
+    local function maintainDecoyCamera()
+        if FarmVisual.Decoy ~= decoy or not decoy.Parent or not decoyHumanoid.Parent then
+            return
+        end
+
+        for instance, saved in pairs(FarmVisual.OriginalVisuals or {}) do
+            if instance and instance.Parent and type(saved) == "table" then
+                pcall(function()
+                    if saved.Kind == "BasePart" then
+                        if instance.LocalTransparencyModifier ~= 1 then
+                            instance.LocalTransparencyModifier = 1
+                        end
+                        if instance.Transparency ~= 1 then
+                            instance.Transparency = 1
+                        end
+                    elseif saved.Kind == "Texture" and instance.Transparency ~= 1 then
+                        instance.Transparency = 1
+                    end
+                end)
+            end
+        end
+
+        local currentCamera = workspace.CurrentCamera
+        if currentCamera then
+            pcall(function()
+                if currentCamera.CameraType ~= Enum.CameraType.Custom then
+                    currentCamera.CameraType = Enum.CameraType.Custom
+                end
+                if currentCamera.CameraSubject ~= decoyHumanoid then
+                    currentCamera.CameraSubject = decoyHumanoid
+                end
+            end)
+        end
+    end
+
+    pcall(function()
+        RunService:BindToRenderStep(FarmVisual.CameraBindBefore, Enum.RenderPriority.Camera.Value - 1, maintainDecoyCamera)
+        RunService:BindToRenderStep(FarmVisual.CameraBindAfter, Enum.RenderPriority.Camera.Value + 1, maintainDecoyCamera)
+        maintainDecoyCamera()
+    end)
+
+    return true
+end
+
+function FarmVisual.restoreAtSafe()
+    local char, hrp = getCharacter()
+    if hrp and (hrp.Position - SafeZone).Magnitude > 6 then
+        Move.teleSafe()
+    end
+    FarmVisual.cleanup()
+    return hrp ~= nil
+end
+
+local function waitForArrival(part, timeout)
+    timeout = math.clamp(tonumber(timeout) or 2.5, 1.0, 4.0)
+    local started = os.clock()
+    local char, root = getCharacter()
+    if not char or not root then return false end
+    local expectedCharacter = char
+    local previousPosition = nil
+    local stableFrames = 0
+    local settleTime = 0.25
+
+    while _G.ItemFarm and not isShutdown and part and part.Parent and part:IsDescendantOf(workspace)
+        and os.clock() - started < timeout do
+        local currentChar, currentRoot = getCharacter()
+        if not currentChar or currentChar ~= expectedCharacter or not currentRoot then return false end
+
+        local targetPosition = part.Position + Vector3.new(0, 3, 0)
+        if (currentRoot.Position - targetPosition).Magnitude > 0.1 then
+            currentRoot.CFrame = CFrame.new(targetPosition)
+        end
+        zeroHrpVelocity(currentRoot)
+
+        local currentPosition = currentRoot.Position
+        local moved = previousPosition and (currentPosition - previousPosition).Magnitude or 0
+        if (currentPosition - targetPosition).Magnitude <= 0.15 and moved <= 0.35 then
+            stableFrames = stableFrames + 1
+        else
+            stableFrames = 0
+        end
+        previousPosition = currentPosition
+
+        if stableFrames >= 5 then
+            local settleUntil = os.clock() + settleTime
+            while _G.ItemFarm and not isShutdown and part and part.Parent and part:IsDescendantOf(workspace)
+                and os.clock() < settleUntil do
+                local c, r = getCharacter()
+                if not c or c ~= expectedCharacter or not r then return false end
+                targetPosition = part.Position + Vector3.new(0, 3, 0)
+                if (r.Position - targetPosition).Magnitude > 0.1 then
+                    r.CFrame = CFrame.new(targetPosition)
+                end
+                zeroHrpVelocity(r)
+                RunService.Heartbeat:Wait()
+            end
+
+            if isShutdown or not _G.ItemFarm or not part or not part.Parent or not part:IsDescendantOf(workspace) then
+                return false
+            end
+
+            local finalChar, finalRoot = getCharacter()
+            if not finalRoot then return false end
+            targetPosition = part.Position + Vector3.new(0, 3, 0)
+            if (finalRoot.Position - targetPosition).Magnitude > 0.1 then
+                finalRoot.CFrame = CFrame.new(targetPosition)
+                zeroHrpVelocity(finalRoot)
+                RunService.Heartbeat:Wait()
+            end
+
+            return _G.ItemFarm and not isShutdown
+                and player.Character == expectedCharacter
+                and part.Parent ~= nil
+                and part:IsDescendantOf(workspace)
+                and (finalRoot.Position - (part.Position + Vector3.new(0, 3, 0))).Magnitude <= 0.8
+                and (part.Position - finalRoot.Position).Magnitude <= 4.5
+        end
+
+        RunService.Heartbeat:Wait()
+    end
+
+    return false
+end
+
 -- ====================
 -- АКТИВАЦІЯ ТА ЗБІР ПРЕДМЕТА
 -- ====================
@@ -592,13 +988,25 @@ local function triggerPickupPrompt(prompt)
     end
 
     prompt.RequiresLineOfSight = false
-    prompt.HoldDuration = 0
+    local oldHoldDuration = prompt.HoldDuration
+    pcall(function() prompt.HoldDuration = 0 end)
 
+    local success = false
     if fireproximityprompt then
-        pcall(function() fireproximityprompt(prompt, 0) end)
-        return true
+        local ok = pcall(function() fireproximityprompt(prompt, 0, true) end)
+        if not ok then
+            pcall(function() fireproximityprompt(prompt, 0) end)
+        end
+        success = true
     end
-    return false
+
+    task.delay(0.2, function()
+        if prompt and prompt.Parent and oldHoldDuration ~= nil then
+            pcall(function() prompt.HoldDuration = oldHoldDuration end)
+        end
+    end)
+
+    return success
 end
 
 local function farmItem(model, part, trackedData)
@@ -619,38 +1027,75 @@ local function farmItem(model, part, trackedData)
         return prompt
     end
 
-    -- Плавний доліт до предмета
-    local arrived = flyToItem(part, _G.FlySpeed, function()
-        return _G.ItemFarm and not isShutdown and part.Parent ~= nil and part:IsDescendantOf(workspace)
-    end)
+    if _G.InstantFarm then
+        -- Швидкий інстант-фарм через SafeZone телепортацію (як у 1.txt)
+        if not FarmVisual.isActive() then
+            moveToSafeIfNeeded()
+            FarmVisual.showSafeZoneDecoy()
+        end
 
-    if isShutdown or not _G.ItemFarm then return false end
-    if not part.Parent or not part:IsDescendantOf(workspace) then
-        unregisterItem(part)
-        return true
-    end
-
-    task.wait(0.04)
-
-    -- Підбір через ProximityPrompt
-    local prompt = findPrompt()
-    if prompt and prompt.Parent and prompt.Enabled then
-        for attempt = 1, 3 do
-            if isShutdown or not _G.ItemFarm or not part.Parent or not part:IsDescendantOf(workspace) then break end
-            triggerPickupPrompt(prompt)
-            task.wait(0.12)
-            if not part.Parent or not part:IsDescendantOf(workspace) or not prompt.Parent or not prompt.Enabled then
-                unregisterItem(part)
-                return true
+        local moved = Move.telePart(part)
+        if moved and waitForArrival(part, 2.5) then
+            local prompt = findPrompt()
+            if prompt and prompt.Parent and prompt.Enabled then
+                for attempt = 1, 3 do
+                    if isShutdown or not _G.ItemFarm or not part.Parent or not part:IsDescendantOf(workspace) then break end
+                    triggerPickupPrompt(prompt)
+                    task.wait(0.08)
+                    if not part.Parent or not part:IsDescendantOf(workspace) or not prompt.Parent or not prompt.Enabled then
+                        unregisterItem(part)
+                        break
+                    end
+                end
             end
         end
-    end
 
-    if not part.Parent or not part:IsDescendantOf(workspace) then
-        unregisterItem(part)
-        return true
+        -- Миттєве повернення на безпечну позицію після збору
+        moveToSafeIfNeeded()
+        task.wait(0.03)
+
+        if not part.Parent or not part:IsDescendantOf(workspace) then
+            unregisterItem(part)
+            return true
+        end
+        return false
+    else
+        -- Звичайний плавний політ (якщо InstantFarm вимкнено)
+        if FarmVisual.Decoy then
+            FarmVisual.cleanup()
+        end
+
+        local arrived = flyToItem(part, _G.FlySpeed, function()
+            return _G.ItemFarm and not isShutdown and part.Parent ~= nil and part:IsDescendantOf(workspace)
+        end)
+
+        if isShutdown or not _G.ItemFarm then return false end
+        if not part.Parent or not part:IsDescendantOf(workspace) then
+            unregisterItem(part)
+            return true
+        end
+
+        task.wait(0.04)
+
+        local prompt = findPrompt()
+        if prompt and prompt.Parent and prompt.Enabled then
+            for attempt = 1, 3 do
+                if isShutdown or not _G.ItemFarm or not part.Parent or not part:IsDescendantOf(workspace) then break end
+                triggerPickupPrompt(prompt)
+                task.wait(0.12)
+                if not part.Parent or not part:IsDescendantOf(workspace) or not prompt.Parent or not prompt.Enabled then
+                    unregisterItem(part)
+                    return true
+                end
+            end
+        end
+
+        if not part.Parent or not part:IsDescendantOf(workspace) then
+            unregisterItem(part)
+            return true
+        end
+        return false
     end
-    return false
 end
 
 local function tryRespawn()
@@ -691,6 +1136,9 @@ local function startFarmThread()
             local item, part, data = getNearestFarmItem(hrp)
             if not item or not part then
                 setFarmStatus("Очікування спавну предметів...")
+                if _G.InstantFarm then
+                    moveToSafeIfNeeded()
+                end
                 task.wait(0.25)
                 continue
             end
@@ -721,6 +1169,9 @@ local function startFarmThread()
             farmThreadActive = false
             setFarmStatus("Зупинено")
             stopFlight()
+            if FarmVisual.Decoy then
+                FarmVisual.restoreAtSafe()
+            end
         end
     end)
 end
@@ -854,6 +1305,7 @@ local function closeMerchantDialogue()
         task.wait(0.12)
         if gui:IsA("ScreenGui") and gui.Enabled then pcall(function() gui.Enabled = false end) end
     end
+    forceUnequipAllTools()
 end
 
 local function sellSingleItem(item)
@@ -900,9 +1352,10 @@ local function sellSingleItem(item)
     end)
     task.wait(0.1)
 
-    if not isItemSold(item) and hum then
+    if hum then
         pcall(function() hum:UnequipTools() end)
     end
+    forceUnequipAllTools()
 
     return isItemSold(item), isItemSold(item) and "Success" or "ItemStillExists"
 end
@@ -1453,6 +1906,7 @@ local function shutdownScript()
     _G.AntiAFK          = false
     _G.StandaloneNoClip = false
     _G.AutoRespawn      = false
+    _G.InstantFarm      = false
 
     farmSessionId        = farmSessionId + 1
     farmThreadActive     = false
@@ -1464,6 +1918,10 @@ local function shutdownScript()
     pcall(cleanupFlight)
     pcall(clearESP)
     pcall(closeMerchantDialogue)
+    pcall(forceUnequipAllTools)
+    if FarmVisual.Decoy then
+        pcall(FarmVisual.cleanup)
+    end
 
     if noclipConnection then
         pcall(function() noclipConnection:Disconnect() end)
@@ -2016,7 +2474,7 @@ local shopPage = createTab("Магазин",  "🛒")
 local miscPage = createTab("Інше",     "⚙")
 
 local autoLoadToggle, jumpPowerSlider, flySpeedSlider
-local itemEspToggle, autoCandyToggle
+local itemEspToggle, autoCandyToggle, instantFarmToggle
 local autoBuyToggle, antiAfkToggle, noclipToggle, autoRespawnToggle
 local itemToggleControls = {}
 
@@ -2062,6 +2520,14 @@ end)
 
 flySpeedSlider = createSlider(farmPage, "Автофарм", "Швидкість польоту (FlySpeed)", 50, 300, 5, _G.FlySpeed, function(val)
     _G.FlySpeed = val
+end)
+
+instantFarmToggle = createToggle(farmPage, "Автофарм", "Інстант фарм (SafeZone Methion)", _G.InstantFarm, function(value)
+    manuallyChanged.InstantFarm = true
+    _G.InstantFarm = value
+    if not value and FarmVisual.Decoy then
+        FarmVisual.restoreAtSafe()
+    end
 end)
 
 itemEspToggle = createToggle(farmPage, "Автофарм", "Увімкнути ESP", _G.ItemESP, function(val)
@@ -2209,6 +2675,7 @@ saveCurrentConfig = function()
         FlySpeed         = _G.FlySpeed,
         JumpPower        = JP_Value,
         ItemESP          = _G.ItemESP,
+        InstantFarm      = _G.InstantFarm,
         ItemFarm         = _G.ItemFarm,
         AutoSell         = _G.AutoSell,
         AutoEventCandy   = _G.AutoEventCandy,
@@ -2254,6 +2721,13 @@ loadCurrentConfig = function(isAutoLoad)
     if data.StandaloneNoClip ~= nil and noclipToggle       then noclipToggle:Set(data.StandaloneNoClip, true) end
     if data.AutoEventCandy   ~= nil and autoCandyToggle    then autoCandyToggle:Set(data.AutoEventCandy, true) end
     if data.AutoBuy          ~= nil and autoBuyToggle      then autoBuyToggle:Set(data.AutoBuy, true) end
+
+    if data.InstantFarm ~= nil and not isShutdown then
+        _G.InstantFarm = (data.InstantFarm == true)
+        if instantFarmToggle and instantFarmToggle:Get() ~= _G.InstantFarm then
+            instantFarmToggle:Set(_G.InstantFarm, false)
+        end
+    end
 
     if data.AutoSell ~= nil and not isShutdown then
         setAutoSellState(data.AutoSell == true)
@@ -2310,6 +2784,17 @@ local function runSteppedAutoLoad()
     if isShutdown then return end
 
     local steps = {
+        {
+            key = "InstantFarm",
+            control = instantFarmToggle,
+            label = "Інстант фарм (SafeZone)",
+            activate = function(val)
+                _G.InstantFarm = (val == true)
+                if instantFarmToggle and instantFarmToggle:Get() ~= _G.InstantFarm then
+                    instantFarmToggle:Set(_G.InstantFarm, false)
+                end
+            end,
+        },
         {
             key = "ItemFarm",
             control = itemFarmToggle,
