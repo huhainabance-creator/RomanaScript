@@ -1403,7 +1403,7 @@ local function sellSingleItemWithRetries(item, maxRetries)
         local ok, errStage = sellSingleItem(item)
         if ok then return true, "Success" end
         lastError = errStage
-        task.wait(0.2)
+        task.wait(1.0)
     end
     return false, lastError
 end
@@ -1465,16 +1465,18 @@ local function startAutoSellThread()
 
             if #snapshot > 0 and not isShutdown then
                 print(string.format("[UA Killer Hub | AutoSell] Створено snapshot: %d предметів. Початок продажу (Farm працює паралельно)...", #snapshot))
+                task.wait(1.0)
                 for _, item in ipairs(snapshot) do
                     if not _G.AutoSell or (autoSellSessionId ~= currentSession) or isShutdown then break end
                     if not isItemSold(item) and not DontSell[item.Name] then
                         sellSingleItemWithRetries(item, 3)
-                        task.wait(0.15)
+                        task.wait(1.0) -- КД в 1 секунду між кожним предметом
                     end
                 end
                 if not isShutdown then
                     closeMerchantDialogue()
                 end
+                task.wait(0.5)
                 print("[UA Killer Hub | AutoSell] Продаж поточного snapshot повністю завершено!")
             else
                 if not isShutdown then
