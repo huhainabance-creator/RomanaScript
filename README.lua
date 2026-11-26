@@ -1,6 +1,6 @@
 -- ====================================================================
--- UA Killer Hub | YBA — Instant SafeZone Farm & AutoSell (No-Kick)
--- Інстант фарм через SafeZone Decoy (як у 1.txt) + 100с Snapshot AutoSell + Shutdown
+-- UA Killer Hub | YBA — Instant SafeZone Farm & AutoSell (Fixed Edition)
+-- Виправлено: відображення вкладок, розблокування інвентаря, зняття кнопки DROP
 -- ====================================================================
 print("[UA Killer Hub | Init] Початок запуску скрипта...")
 
@@ -453,14 +453,14 @@ local function updateESP()
                 bb.AlwaysOnTop = true
 
                 local lbl = Instance.new("TextLabel")
-                lbl.Size = UDim2.new(1, 0, 1, 0)
+                lbl.Size                   = UDim2.new(1, 0, 1, 0)
                 lbl.BackgroundTransparency = 1
-                lbl.Text = data.Name
-                lbl.TextColor3 = FARM_PRIORITY[data.Name] and Color3.fromRGB(255, 215, 0) or Color3.fromRGB(255, 255, 255)
+                lbl.Text                   = data.Name
+                lbl.TextColor3             = FARM_PRIORITY[data.Name] and Color3.fromRGB(255, 215, 0) or Color3.fromRGB(255, 255, 255)
                 lbl.TextStrokeTransparency = 0.2
-                lbl.TextSize = 13
-                lbl.Font = Enum.Font.GothamBold
-                lbl.Parent = bb
+                lbl.TextSize               = 13
+                lbl.Font                   = Enum.Font.GothamBold
+                lbl.Parent                 = bb
 
                 bb.Parent = part
                 activeBillboards[part] = bb
@@ -540,6 +540,11 @@ local FarmVisual = {
 
 local function hideFarmVisual(instance)
     if not instance or not instance.Parent then return end
+
+    -- НІКОЛИ не приховувати інструменти (Tools) та їхні частини, щоб інвентар залишався видимим!
+    if instance:IsA("Tool") or instance:FindFirstAncestorWhichIsA("Tool") then
+        return
+    end
 
     if instance:IsA("BasePart") then
         if FarmVisual.OriginalVisuals[instance] == nil then
@@ -1389,12 +1394,21 @@ local function startFarmThread()
                 FarmVisual.cleanup()
             end
 
+            local anySelected = false
+            for _, sel in pairs(_G.SelectedItems) do
+                if sel == true then anySelected = true break end
+            end
+
             local item, part, data = getNearestFarmItem(hrp)
             if not item or not part then
                 if instantMode then
                     moveToSafeIfNeeded()
                 end
-                setFarmStatus("Очікування спавну предметів...")
+                if not anySelected then
+                    setFarmStatus("Оберіть предмети у вкладці Автофарм!")
+                else
+                    setFarmStatus("Очікування спавну предметів...")
+                end
                 task.wait(0.25)
                 continue
             end
@@ -1535,7 +1549,31 @@ local function autoClickDialogueButtons()
     end
 end
 
+-- Функція гарантованого повернення всіх інструментів у рюкзак (прибирає кнопку DROP)
+local function forceUnequipAllTools()
+    local char = player.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if hum then
+        pcall(function() hum:UnequipTools() end)
+    end
+    if char then
+        local bp = player:FindFirstChild("Backpack")
+        for _, obj in ipairs(char:GetChildren()) do
+            if obj:IsA("Tool") then
+                pcall(function()
+                    if bp then
+                        obj.Parent = bp
+                    elseif hum then
+                        hum:UnequipTools()
+                    end
+                end)
+            end
+        end
+    end
+end
+
 local function closeMerchantDialogue()
+    pcall(forceUnequipAllTools)
     local char   = player.Character
     local remote = char and char:FindFirstChild("RemoteEvent")
     pcall(function()
@@ -1564,6 +1602,37 @@ local function closeMerchantDialogue()
         task.wait(0.12)
         if gui:IsA("ScreenGui") and gui.Enabled then pcall(function() gui.Enabled = false end) end
     end
+    pcall(forceUnequipAllTools)
+end
+
+-- Натискання опції в меню діалогу YBA (Option1, Option6 тощо)
+local function clickDialogueOption(optionName, timeout)
+    timeout = timeout or 2.0
+    local deadline = tick() + timeout
+    while tick() < deadline and not isShutdown do
+        local gui = getDialogueGui()
+        if gui then
+            local frame = gui:FindFirstChild("Frame")
+            local options = frame and frame:FindFirstChild("Options")
+            if options then
+                local opt = options:FindFirstChild(optionName) or options:FindFirstChild(optionName, true)
+                local btn = (opt and opt:IsA("GuiButton")) and opt or (opt and opt:FindFirstChildWhichIsA("GuiButton", true))
+                if btn and isGuiElementVisible(btn) then
+                    pcall(function()
+                        if firesignal then
+                            firesignal(btn.MouseButton1Click)
+                            firesignal(btn.Activated)
+                        else
+                            btn.Activated:Fire()
+                        end
+                    end)
+                    return true
+                end
+            end
+        end
+        task.wait(0.05)
+    end
+    return false
 end
 
 local function sellSingleItem(item)
@@ -1574,25 +1643,41 @@ local function sellSingleItem(item)
     local merchant = getMerchant()
     if not hum or not remote or not merchant then return false, "MissingCharacterOrNPC" end
 
+    -- Одягаємо предмет для продажу
     hum:EquipTool(item)
     local equipTimeout = tick() + 0.8
     while tick() < equipTimeout and item.Parent ~= char and not isShutdown do task.wait(0.04) end
-    if item.Parent ~= char or isShutdown then return false, "EquipTimeoutOrShutdown" end
+    if item.Parent ~= char or isShutdown then
+        forceUnequipAllTools()
+        return false, "EquipTimeoutOrShutdown"
+    end
 
-    task.wait(0.12)
-    if isShutdown then return false, "Shutdown" end
+    task.wait(0.08)
+    if isShutdown then forceUnequipAllTools() return false, "Shutdown" end
+
+    -- Крок 1: Відкриваємо Merchant
     remote:FireServer("PromptTriggered", merchant)
     task.wait(0.12)
+    clickDialogueOption("Option1", 1.8)
     autoClickDialogueButtons()
 
-    if isShutdown then return false, "Shutdown" end
-    remote:FireServer("DialogueType", { Option = "Option1", Dialogue = "Dialogue1", NPC = "Merchant" })
+    task.wait(0.08)
+    if isShutdown then forceUnequipAllTools() return false, "Shutdown" end
+
+    -- Крок 2: Обираємо предмет
+    remote:FireServer("PromptTriggered", merchant)
     task.wait(0.12)
+    clickDialogueOption("Option1", 1.8)
     autoClickDialogueButtons()
 
-    if isShutdown then return false, "Shutdown" end
-    remote:FireServer("DialogueType", { Option = "Option1", Dialogue = "Dialogue5", NPC = "Merchant" })
-    task.wait(0.12)
+    task.wait(0.08)
+    if isShutdown then forceUnequipAllTools() return false, "Shutdown" end
+
+    -- Крок 3: Підтверджуємо угоду (Deal)
+    local dealClicked = clickDialogueOption("Option6", 1.5)
+    if not dealClicked then
+        clickDialogueOption("Option1", 0.6)
+    end
     autoClickDialogueButtons()
 
     local sellTimeout = tick() + 1.2
@@ -1602,19 +1687,13 @@ local function sellSingleItem(item)
         task.wait(0.08)
     end
 
-    pcall(function()
-        remote:FireServer("EndDialogue", { Option = "Option1", Dialogue = "Dialogue5", NPC = "Merchant" })
-        remote:FireServer("DialogueType", { Option = "Option1", Dialogue = "Dialogue3", NPC = "Merchant" })
-        remote:FireServer("EndDialogue", { Option = "Option1", Dialogue = "Dialogue3", NPC = "Merchant" })
-        remote:FireServer("DialogueEnd",  { Option = "Option1", Dialogue = "Dialogue3", NPC = "Merchant" })
-    end)
-    task.wait(0.1)
+    local sold = isItemSold(item)
 
-    if not isItemSold(item) and hum then
-        pcall(function() hum:UnequipTools() end)
-    end
+    -- ЗАВЖДИ закриваємо діалог та повертаємо інструменти назад у Backpack!
+    closeMerchantDialogue()
+    forceUnequipAllTools()
 
-    return isItemSold(item), isItemSold(item) and "Success" or "ItemStillExists"
+    return sold, sold and "Success" or "ItemStillExists"
 end
 
 local function sellSingleItemWithRetries(item, maxRetries)
@@ -1745,6 +1824,7 @@ end
 -- АВТО-ЗДАЧА ЦУКЕРОК HALLOWEEN EVENT
 -- =======================================================
 local function closeHalloweenDialogue()
+    pcall(forceUnequipAllTools)
     local char   = player.Character
     local remote = char and char:FindFirstChild("RemoteEvent")
     pcall(function()
@@ -1773,6 +1853,7 @@ local function closeHalloweenDialogue()
         task.wait(0.12)
         if gui:IsA("ScreenGui") and gui.Enabled then pcall(function() gui.Enabled = false end) end
     end
+    pcall(forceUnequipAllTools)
 end
 
 local function turnInCandy(candyItem)
@@ -1785,20 +1866,20 @@ local function turnInCandy(candyItem)
     hum:EquipTool(candyItem)
     local t = tick() + 0.8
     while tick() < t and candyItem.Parent ~= char and not isShutdown do task.wait(0.04) end
-    if candyItem.Parent ~= char or isShutdown then return false end
+    if candyItem.Parent ~= char or isShutdown then forceUnequipAllTools() return false end
 
     task.wait(0.12)
-    if isShutdown then return false end
+    if isShutdown then forceUnequipAllTools() return false end
     remote:FireServer("PromptTriggered", eventNPC)
     task.wait(0.12)
     autoClickDialogueButtons()
 
-    if isShutdown then return false end
+    if isShutdown then forceUnequipAllTools() return false end
     remote:FireServer("DialogueType", { NPC = "Halloween Event", Option = "Option1", Dialogue = "Dialogue1" })
     task.wait(0.12)
     autoClickDialogueButtons()
 
-    if isShutdown then return false end
+    if isShutdown then forceUnequipAllTools() return false end
     remote:FireServer("DialogueType", { NPC = "Halloween Event", Option = "Option1", Dialogue = "Dialogue2" })
     task.wait(0.12)
     autoClickDialogueButtons()
@@ -1818,10 +1899,7 @@ local function turnInCandy(candyItem)
     end)
     task.wait(0.1)
 
-    if not isItemSold(candyItem) and hum then
-        pcall(function() hum:UnequipTools() end)
-    end
-
+    forceUnequipAllTools()
     return isItemSold(candyItem)
 end
 
@@ -2126,6 +2204,7 @@ local function shutdownScript()
     end)
     pcall(clearESP)
     pcall(closeMerchantDialogue)
+    pcall(forceUnequipAllTools)
 
     if noclipConnection then
         pcall(function() noclipConnection:Disconnect() end)
@@ -2275,12 +2354,13 @@ Sidebar.BackgroundColor3 = Color3.fromRGB(17, 19, 24)
 Sidebar.BorderSizePixel  = 0
 Sidebar.Parent           = MainFrame
 
+-- Розділювальна лінія між сайдбаром та вмістом (розміщена в MainFrame, щоб не збивати UIListLayout списку)
 local SidebarRightLine = Instance.new("Frame")
-SidebarRightLine.Size             = UDim2.new(0, 1, 1, 0)
-SidebarRightLine.Position         = UDim2.new(1, -1, 0, 0)
+SidebarRightLine.Size             = UDim2.new(0, 1, 1, -42)
+SidebarRightLine.Position         = UDim2.new(0, 134, 0, 42)
 SidebarRightLine.BackgroundColor3 = Color3.fromRGB(27, 30, 38)
 SidebarRightLine.BorderSizePixel  = 0
-SidebarRightLine.Parent           = Sidebar
+SidebarRightLine.Parent           = MainFrame
 
 local TabListLayout = Instance.new("UIListLayout")
 TabListLayout.FillDirection        = Enum.FillDirection.Vertical
@@ -2305,6 +2385,7 @@ ContentArea.Parent           = MainFrame
 local pages    = {}
 local tabBtns  = {}
 local currentTab = nil
+local itemToggleControls = {}
 
 local function switchTab(tabName)
     if isShutdown or currentTab == tabName then return end
@@ -3127,7 +3208,13 @@ end
 -- =======================================================
 -- ПЕРВИННИЙ СКАНИНГ ТА СТАРТ
 -- =======================================================
+-- 1. Гарантовано знімаємо будь-який утримуваний предмет, щоб прибрати кнопку DROP та розблокувати інвентар
+forceUnequipAllTools()
+
+-- 2. Первинний сканінг предметів на карті
 scanAllItems()
+
+-- 3. Активація головної вкладки
 switchTab("Головна")
 print("[UA Killer Hub | Init] Інтерфейс відкрито та готовий до роботи!")
 
