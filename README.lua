@@ -50,12 +50,12 @@ local RETURNER_KEY = "idklolbrah2de"
 local RETURNER_RESPONSE = "  ___XP DE KEY"
 local bypassSupported = false
 
--- 1. YBA Returner Remote Hook (Namecall - безпечний, не крашить гру)
+-- 1. YBA Returner Remote Hook (Namecall - універсальний, блокує всі кіки античиту)
 pcall(function()
     if hookmetamethod and newcclosure and checkcaller then
         local old
         old = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
-            if not checkcaller() and typeof(self) == "Instance" and self.Name == "Returner" and rawequal((...), RETURNER_KEY) then
+            if not checkcaller() and typeof(self) == "Instance" and self.Name == "Returner" then
                 return RETURNER_RESPONSE
             end
             return old(self, ...)
@@ -324,7 +324,10 @@ end
 local function isValidPosition(part)
     if not part or not part:IsDescendantOf(workspace) then return false end
     local p = part.Position
-    return not (math.abs(p.X) < 1 and math.abs(p.Y) < 1 and math.abs(p.Z) < 1)
+    -- Захист від неініціалізованих координат (0,0,0) та випадіння під карту/в безодню (Y < -50 або Y > 350)
+    if math.abs(p.X) < 1 and math.abs(p.Y) < 1 and math.abs(p.Z) < 1 then return false end
+    if p.Y < -50 or p.Y > 350 then return false end
+    return true
 end
 
 local function isPartInvisible(part)
@@ -1047,6 +1050,12 @@ local function farmItem(model, part, trackedData)
         return false
     end
 
+    -- Захист від збору зниклих, чужих або підземних предметів
+    if not isValidPosition(part) or isPartInvisible(part) or isPlayerOwned(part) then
+        unregisterItem(part)
+        return false
+    end
+
     local char, hrp = getCharacter()
     if not hrp then return false end
 
@@ -1060,7 +1069,7 @@ local function farmItem(model, part, trackedData)
     end
 
     if _G.InstantFarm then
-        -- Швидкий інстант-фарм через SafeZone телепортацію (як у 1.txt)
+        -- Швидкий інстант-фарм від предмета до предмета (як у Methion 1.txt)
         if not FarmVisual.isActive() then
             moveToSafeIfNeeded()
             FarmVisual.showSafeZoneDecoy()
@@ -1068,13 +1077,15 @@ local function farmItem(model, part, trackedData)
 
         local moved = Move.telePart(part)
         if moved and waitForArrival(part, 2.5) then
+            local _, curHrp = getCharacter()
             local prompt = findPrompt()
-            if prompt and prompt.Parent and prompt.Enabled then
+            -- Перевіряємо, що ми дійсно поруч з предметом і він ще видимий
+            if curHrp and (part.Position - curHrp.Position).Magnitude <= 4.5 and prompt and prompt.Parent and prompt.Enabled and not isPartInvisible(part) then
                 for attempt = 1, 3 do
-                    if isShutdown or not _G.ItemFarm or not part.Parent or not part:IsDescendantOf(workspace) then break end
+                    if isShutdown or not _G.ItemFarm or not part.Parent or not part:IsDescendantOf(workspace) or isPartInvisible(part) then break end
                     triggerPickupPrompt(prompt)
                     task.wait(0.08)
-                    if not part.Parent or not part:IsDescendantOf(workspace) or not prompt.Parent or not prompt.Enabled then
+                    if not part.Parent or not part:IsDescendantOf(workspace) or not prompt.Parent or not prompt.Enabled or isPartInvisible(part) then
                         unregisterItem(part)
                         break
                     end
@@ -1082,12 +1093,10 @@ local function farmItem(model, part, trackedData)
             end
         end
 
-        -- Затримка для завершення обробки підбору сервером перед поверненням у SafeZone
-        task.wait(0.06)
-        moveToSafeIfNeeded()
-        task.wait(0.03)
+        -- Пауза для підтвердження підбору сервером без зайвого телепорту в SafeZone
+        task.wait(0.08)
 
-        if not part.Parent or not part:IsDescendantOf(workspace) then
+        if not part.Parent or not part:IsDescendantOf(workspace) or isPartInvisible(part) then
             unregisterItem(part)
             return true
         end
@@ -1195,7 +1204,7 @@ local function startFarmThread()
                 failedItemAttempts[part] = nil
             end
 
-            task.wait(0.04)
+            task.wait(0.12) -- Стабільна пауза між збором для синхронізації з сервером (без кіку)
         end
 
         if farmSessionId == currentSession then
