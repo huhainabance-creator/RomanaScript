@@ -186,6 +186,7 @@ local flightState
 local noclipConnection
 local antiAfkConnection
 local JP_Value = 50
+local showNotification = nil
 
 -- Стан готовності систем
 local TeleportService = game:GetService("TeleportService")
@@ -1643,53 +1644,134 @@ end
 -- СИСТЕМА АВТОКУПІВЛІ LUCKY ARROW ПРИ ЛІМІТІ ГРОШЕЙ (1M)
 -- =======================================================
 local autoBuy1MThreadActive = false
+local autoBuy1MSessionId    = 0
+local autoBuy1MToggle       = nil
+
+local function parseMoneyValue(val)
+    if type(val) == "number" then return val end
+    if type(val) == "string" then
+        local cleaned = val:gsub("[^%d]", "")
+        return tonumber(cleaned) or 0
+    end
+    return 0
+end
 
 local function getPlayerMoney()
     local ps = player:FindFirstChild("PlayerStats")
     if ps then
         local m = ps:FindFirstChild("Money")
-        if m then return tonumber(m.Value) or 0 end
+        if m then
+            local val = parseMoneyValue(m.Value)
+            if val > 0 then return val end
+        end
     end
     local ls = player:FindFirstChild("leaderstats")
     if ls then
         local m = ls:FindFirstChild("Money") or ls:FindFirstChild("Cash")
-        if m then return tonumber(m.Value) or 0 end
+        if m then
+            local val = parseMoneyValue(m.Value)
+            if val > 0 then return val end
+        end
+    end
+    local pgui = player:FindFirstChild("PlayerGui")
+    if pgui then
+        local hud = pgui:FindFirstChild("HUD")
+        if hud then
+            local main = hud:FindFirstChild("Main")
+            if main then
+                local dropMoney = main:FindFirstChild("DropMoney")
+                local moneyObj = dropMoney and dropMoney:FindFirstChild("Money")
+                if moneyObj and moneyObj:IsA("ValueBase") then
+                    local val = parseMoneyValue(moneyObj.Value)
+                    if val > 0 then return val end
+                end
+            end
+        end
     end
     return 0
 end
 
 local function buyLuckyArrow()
+    local bought = false
     pcall(function()
-        local char = player.Character
-        local remote = char and char:FindFirstChild("RemoteEvent")
+        local char = player.Character or player.CharacterAdded:Wait()
+        if not char then return end
+        local remote = char:FindFirstChild("RemoteEvent")
+        if not remote then
+            remote = char:WaitForChild("RemoteEvent", 2)
+        end
         if remote then
             remote:FireServer("PurchaseShopItem", { ItemName = "1x Lucky Arrow" })
+            bought = true
+        end
+    end)
+    return bought
+end
+
+local function startAutoBuy1MThread()
+    if isShutdown or not _G.AutoBuyLucky1M then return end
+
+    autoBuy1MSessionId = autoBuy1MSessionId + 1
+    local currentSession = autoBuy1MSessionId
+    autoBuy1MThreadActive = true
+
+    task.spawn(function()
+        print(string.format("[UA Killer Hub | Shop] Потік автокупівлі Lucky при 1M (Сесія #%d) активовано.", currentSession))
+
+        while _G.AutoBuyLucky1M and (autoBuy1MSessionId == currentSession) and not isShutdown do
+            task.wait(1.0)
+            if not _G.AutoBuyLucky1M or (autoBuy1MSessionId ~= currentSession) or isShutdown then break end
+
+            local ok, err = pcall(function()
+                local currentMoney = getPlayerMoney()
+                -- Ліміт грошей у грі становить 1,000,000 $ (або більше з геймпасом)
+                if currentMoney >= 1000000 then
+                    print(string.format("[UA Killer Hub | Shop] Баланс %d $ >= 1,000,000 $ (Ліміт). Купівля Lucky Arrow...", currentMoney))
+                    local bought = buyLuckyArrow()
+                    if bought then
+                        pcall(function()
+                            if showNotification then
+                                showNotification("Магазин", string.format("Гроші 1M (%d$) -> Куплено Lucky Arrow!", currentMoney), 4)
+                            end
+                        end)
+                        -- Пауза, щоб сервер списав кошти ($75,000) та оновив баланс
+                        local waited = 0
+                        while waited < 3.0 and _G.AutoBuyLucky1M and (autoBuy1MSessionId == currentSession) and not isShutdown do
+                            task.wait(0.5)
+                            waited = waited + 0.5
+                        end
+                    else
+                        task.wait(1.5)
+                    end
+                end
+            end)
+
+            if not ok then
+                warn("[UA Killer Hub | Shop] Помилка в циклі автокупівлі 1M: " .. tostring(err))
+            end
+        end
+
+        if autoBuy1MSessionId == currentSession then
+            autoBuy1MThreadActive = false
+            print(string.format("[UA Killer Hub | Shop] Потік автокупівлі Lucky при 1M (Сесія #%d) зупинено.", currentSession))
         end
     end)
 end
 
-local function startAutoBuy1MThread()
-    if autoBuy1MThreadActive or isShutdown then return end
-    autoBuy1MThreadActive = true
+local function setAutoBuyLucky1MState(enabled)
+    if isShutdown then return end
+    _G.AutoBuyLucky1M = (enabled == true)
 
-    task.spawn(function()
-        print("[UA Killer Hub | Shop] Потік автокупівлі Lucky при 1M ($1,000,000) активовано.")
-        while _G.AutoBuyLucky1M and autoBuy1MThreadActive and not isShutdown do
-            task.wait(1.5)
-            if not _G.AutoBuyLucky1M or isShutdown then break end
+    if autoBuy1MToggle and autoBuy1MToggle:Get() ~= _G.AutoBuyLucky1M then
+        autoBuy1MToggle:Set(_G.AutoBuyLucky1M, false)
+    end
 
-            local currentMoney = getPlayerMoney()
-            -- Ліміт грошей у грі становить 1,000,000 $
-            if currentMoney >= 1000000 then
-                print(string.format("[UA Killer Hub | Shop] Досягнуто ліміт грошей: %d $. Купівля Lucky Arrow...", currentMoney))
-                buyLuckyArrow()
-                showNotification("Магазин", string.format("Гроші 1M (%d$) -> Куплено Lucky Arrow!", currentMoney), 4)
-                task.wait(3.0) -- Пауза після покупки, щоб сервер оновив баланс
-            end
-        end
+    if _G.AutoBuyLucky1M then
+        startAutoBuy1MThread()
+    else
+        autoBuy1MSessionId = autoBuy1MSessionId + 1
         autoBuy1MThreadActive = false
-        print("[UA Killer Hub | Shop] Потік автокупівлі Lucky при 1M зупинено.")
-    end)
+    end
 end
 
 -- =======================================================
@@ -1754,6 +1836,17 @@ local function startAutoSellThread()
                     if not _G.AutoSell or (autoSellSessionId ~= currentSession) or isShutdown then break end
                     if not isItemSold(item) and not DontSell[item.Name] then
                         sellSingleItemWithRetries(item, 3)
+                        -- Якщо увімкнено купівлю при 1M і баланс досяг ліміту — купуємо Lucky Arrow одразу
+                        if _G.AutoBuyLucky1M and getPlayerMoney() >= 1000000 then
+                            print("[UA Killer Hub | AutoSell] Досягнуто ліміт 1M під час продажу. Купівля Lucky Arrow...")
+                            buyLuckyArrow()
+                            pcall(function()
+                                if showNotification then
+                                    showNotification("Магазин", "Ліміт 1M під час продажу -> Куплено Lucky Arrow!", 3)
+                                end
+                            end)
+                            task.wait(1.5)
+                        end
                         task.wait(1.0) -- КД в 1 секунду між кожним предметом
                     end
                 end
@@ -2151,7 +2244,7 @@ ToastList.VerticalAlignment   = Enum.VerticalAlignment.Bottom
 ToastList.HorizontalAlignment = Enum.HorizontalAlignment.Center
 ToastList.Parent              = ToastContainer
 
-local function showNotification(title, message, duration)
+showNotification = function(title, message, duration)
     if isShutdown or not ToastContainer or not ToastContainer.Parent then return end
     duration = duration or 3
     local toast = Instance.new("Frame")
@@ -2227,6 +2320,7 @@ local function shutdownScript()
     _G.AutoRespawn      = false
     _G.InstantFarm      = false
     _G.AutoBuyLucky1M   = false
+    autoBuy1MSessionId  = autoBuy1MSessionId + 1
     autoBuy1MThreadActive = false
     _G.LowGFX           = false
     pcall(LowGfx.disable)
@@ -2943,10 +3037,7 @@ end)
 autoBuy1MToggle = createToggle(shopPage, "Магазин", "Купівля Lucky при 1M ($1,000,000)", _G.AutoBuyLucky1M, function(value)
     if isShutdown then return end
     manuallyChanged.AutoBuyLucky1M = true
-    _G.AutoBuyLucky1M = value
-    if value then
-        startAutoBuy1MThread()
-    end
+    setAutoBuyLucky1MState(value)
 end)
 
 -- ── Інше ─────────────────────────────────────────────────
@@ -3075,9 +3166,8 @@ loadCurrentConfig = function(isAutoLoad)
     if data.AutoEventCandy   ~= nil and autoCandyToggle    then autoCandyToggle:Set(data.AutoEventCandy, true) end
     if data.AutoBuy          ~= nil and autoBuyToggle      then autoBuyToggle:Set(data.AutoBuy, true) end
     if data.AutoBuyLucky1M   ~= nil and not isShutdown then
-        _G.AutoBuyLucky1M = (data.AutoBuyLucky1M == true)
-        if autoBuy1MToggle then autoBuy1MToggle:Set(_G.AutoBuyLucky1M, false) end
-        if _G.AutoBuyLucky1M then startAutoBuy1MThread() end
+        manuallyChanged.AutoBuyLucky1M = true
+        setAutoBuyLucky1MState(data.AutoBuyLucky1M == true)
     end
 
     if data.InstantFarm ~= nil and not isShutdown then
@@ -3198,9 +3288,8 @@ local function runSteppedAutoLoad()
             control = autoBuy1MToggle,
             label = "Купівля Lucky при 1M",
             activate = function(val)
-                _G.AutoBuyLucky1M = (val == true)
-                if autoBuy1MToggle then autoBuy1MToggle:Set(_G.AutoBuyLucky1M, false) end
-                if _G.AutoBuyLucky1M then startAutoBuy1MThread() end
+                manuallyChanged.AutoBuyLucky1M = true
+                setAutoBuyLucky1MState(val == true)
             end,
         },
         {
