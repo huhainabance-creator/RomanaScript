@@ -18,6 +18,7 @@ local VirtualInputManager = game:GetService("VirtualInputManager")
 local UserInputService = game:GetService("UserInputService")
 local HttpService = game:GetService("HttpService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Lighting = game:GetService("Lighting")
 
 local player = Players.LocalPlayer
 while not player do
@@ -128,6 +129,7 @@ _G.AutoBuyLucky1M  = false -- Автокупівля Lucky Arrow при дося
 _G.ItemFarm        = false
 _G.InstantFarm     = true -- Інстант-фарм через SafeZone телепортацію з 1.txt (без кіків)
 _G.ItemESP         = false
+_G.LowGFX          = false -- Low GFX режим максимального FPS без перешкод автофарму
 _G.FlySpeed        = 180 -- Безпечна та швидка швидкість польоту (не викликає кік)
 _G.AntiAFK         = false
 _G.StandaloneNoClip= false
@@ -196,6 +198,7 @@ local manuallyChanged = {
     AutoEventCandy   = false,
     AutoBuy          = false,
     AutoBuyLucky1M   = false,
+    LowGFX           = false,
     ItemESP          = false,
     AntiAFK          = false,
     StandaloneNoClip = false,
@@ -250,6 +253,223 @@ end
 
 -- Початкове очищення руки від предметів, щоб не з'являлася кнопка DROP
 pcall(forceUnequipAllTools)
+
+-- =======================================================
+-- СИСТЕМА ОПТИМІЗАЦІЇ ГРАФІКИ ТА FPS (LOW GFX)
+-- =======================================================
+local LowGfx = {
+    SavedParts    = setmetatable({}, { __mode = "k" }),
+    SavedDecals   = setmetatable({}, { __mode = "k" }),
+    SavedEffects  = setmetatable({}, { __mode = "k" }),
+    SavedLighting = nil,
+    SavedTerrain  = nil,
+    Connection    = nil,
+}
+
+local function isProtectedFromLowGfx(obj)
+    if not obj or not obj.Parent then return true end
+    -- Ніколи не чіпаємо персонажа гравця
+    local char = player.Character
+    if char and (obj == char or obj:IsDescendantOf(char)) then return true end
+    -- Ніколи не чіпаємо тули та предмети інвентаря
+    if obj:IsA("Tool") or obj:FindFirstAncestorWhichIsA("Tool") then return true end
+    -- Ніколи не чіпаємо спавни предметів, підбираємі предмети або промпти
+    if Tracked and (Tracked[obj] or TrackedRev[obj]) then return true end
+    if obj:IsA("ProximityPrompt") or obj:FindFirstChildWhichIsA("ProximityPrompt", true) then return true end
+    local spawns = workspace:FindFirstChild("Item_Spawns")
+    if spawns and (obj == spawns or obj:IsDescendantOf(spawns)) then return true end
+    -- Ніколи не чіпаємо ESP, UI або Decoy
+    if obj:IsA("Highlight") or obj:IsA("BillboardGui") or obj:IsA("SurfaceGui") or obj:IsA("ScreenGui") then return true end
+    local name = obj.Name or ""
+    if name:find("Decoy") or name:find("Phantom") or name:find("UA_") or name:find("ESP") then return true end
+    return false
+end
+
+local function applyLowGfxToInstance(obj)
+    if isShutdown or not _G.LowGFX or isProtectedFromLowGfx(obj) then return end
+
+    pcall(function()
+        if obj:IsA("BasePart") then
+            if LowGfx.SavedParts[obj] == nil then
+                LowGfx.SavedParts[obj] = {
+                    Material    = obj.Material,
+                    Reflectance = obj.Reflectance,
+                    CastShadow  = obj.CastShadow,
+                }
+            end
+            obj.Material    = Enum.Material.SmoothPlastic
+            obj.Reflectance = 0
+            obj.CastShadow  = false
+        elseif obj:IsA("Decal") or obj:IsA("Texture") then
+            if LowGfx.SavedDecals[obj] == nil then
+                LowGfx.SavedDecals[obj] = {
+                    Transparency = obj.Transparency,
+                }
+            end
+            obj.Transparency = 1
+        elseif obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Smoke") or obj:IsA("Fire") or obj:IsA("Sparkles") or obj:IsA("Beam") then
+            if LowGfx.SavedEffects[obj] == nil then
+                LowGfx.SavedEffects[obj] = {
+                    Enabled = obj.Enabled,
+                }
+            end
+            obj.Enabled = false
+        end
+    end)
+end
+
+function LowGfx.enable()
+    if isShutdown then return end
+    _G.LowGFX = true
+
+    -- 1. Оптимізація Lighting
+    pcall(function()
+        if LowGfx.SavedLighting == nil then
+            LowGfx.SavedLighting = {
+                GlobalShadows            = Lighting.GlobalShadows,
+                Brightness               = Lighting.Brightness,
+                EnvironmentDiffuseScale  = Lighting.EnvironmentDiffuseScale,
+                EnvironmentSpecularScale = Lighting.EnvironmentSpecularScale,
+                FogStart                 = Lighting.FogStart,
+                FogEnd                   = Lighting.FogEnd,
+            }
+        end
+        Lighting.GlobalShadows            = false
+        Lighting.Brightness               = 1
+        Lighting.EnvironmentDiffuseScale  = 0
+        Lighting.EnvironmentSpecularScale = 0
+        Lighting.FogStart                 = 0
+        Lighting.FogEnd                   = 1e9
+    end)
+
+    for _, v in ipairs(Lighting:GetChildren()) do
+        if v:IsA("PostEffect") then
+            if LowGfx.SavedEffects[v] == nil then
+                LowGfx.SavedEffects[v] = { Enabled = v.Enabled }
+            end
+            pcall(function() v.Enabled = false end)
+        end
+    end
+
+    -- 2. Оптимізація Terrain Water
+    pcall(function()
+        local terrain = workspace:FindFirstChildOfClass("Terrain")
+        if terrain then
+            if LowGfx.SavedTerrain == nil then
+                LowGfx.SavedTerrain = {
+                    WaterTransparency = terrain.WaterTransparency,
+                    WaterWaveSize     = terrain.WaterWaveSize,
+                    WaterWaveSpeed    = terrain.WaterWaveSpeed,
+                    WaterReflectance  = terrain.WaterReflectance,
+                }
+            end
+            terrain.WaterTransparency = 1
+            terrain.WaterWaveSize     = 0
+            terrain.WaterWaveSpeed    = 0
+            terrain.WaterReflectance  = 0
+        end
+    end)
+
+    -- 3. Розблокування FPS (якщо підтримується екзекутором)
+    pcall(function()
+        if setfpscap then setfpscap(144) end
+    end)
+
+    -- 4. Поступова оптимізація існуючих об'єктів без лагів
+    task.spawn(function()
+        local count = 0
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            if isShutdown or not _G.LowGFX then break end
+            applyLowGfxToInstance(obj)
+            count = count + 1
+            if count % 300 == 0 then
+                task.wait()
+            end
+        end
+    end)
+
+    -- 5. Авто-оптимізація нових об'єктів
+    if LowGfx.Connection then
+        LowGfx.Connection:Disconnect()
+        LowGfx.Connection = nil
+    end
+    LowGfx.Connection = workspace.DescendantAdded:Connect(function(obj)
+        if not isShutdown and _G.LowGFX then
+            applyLowGfxToInstance(obj)
+        end
+    end)
+    trackConnection(LowGfx.Connection)
+
+    print("[UA Killer Hub | GFX] Low GFX активовано (максимум FPS, захист автофарму включено).")
+end
+
+function LowGfx.disable()
+    _G.LowGFX = false
+
+    if LowGfx.Connection then
+        pcall(function() LowGfx.Connection:Disconnect() end)
+        LowGfx.Connection = nil
+    end
+
+    -- 1. Відновлення Lighting
+    if LowGfx.SavedLighting then
+        pcall(function()
+            Lighting.GlobalShadows            = LowGfx.SavedLighting.GlobalShadows
+            Lighting.Brightness               = LowGfx.SavedLighting.Brightness
+            Lighting.EnvironmentDiffuseScale  = LowGfx.SavedLighting.EnvironmentDiffuseScale
+            Lighting.EnvironmentSpecularScale = LowGfx.SavedLighting.EnvironmentSpecularScale
+            Lighting.FogStart                 = LowGfx.SavedLighting.FogStart
+            Lighting.FogEnd                   = LowGfx.SavedLighting.FogEnd
+        end)
+        LowGfx.SavedLighting = nil
+    end
+
+    -- 2. Відновлення Terrain
+    if LowGfx.SavedTerrain then
+        pcall(function()
+            local terrain = workspace:FindFirstChildOfClass("Terrain")
+            if terrain then
+                terrain.WaterTransparency = LowGfx.SavedTerrain.WaterTransparency
+                terrain.WaterWaveSize     = LowGfx.SavedTerrain.WaterWaveSize
+                terrain.WaterWaveSpeed    = LowGfx.SavedTerrain.WaterWaveSpeed
+                terrain.WaterReflectance  = LowGfx.SavedTerrain.WaterReflectance
+            end
+        end)
+        LowGfx.SavedTerrain = nil
+    end
+
+    -- 3. Відновлення деталей, текстур та ефектів
+    for obj, saved in pairs(LowGfx.SavedParts) do
+        if obj and obj.Parent then
+            pcall(function()
+                obj.Material    = saved.Material
+                obj.Reflectance = saved.Reflectance
+                obj.CastShadow  = saved.CastShadow
+            end)
+        end
+    end
+    LowGfx.SavedParts = setmetatable({}, { __mode = "k" })
+
+    for obj, saved in pairs(LowGfx.SavedDecals) do
+        if obj and obj.Parent then
+            pcall(function()
+                obj.Transparency = saved.Transparency
+            end)
+        end
+    end
+    LowGfx.SavedDecals = setmetatable({}, { __mode = "k" })
+
+    for obj, saved in pairs(LowGfx.SavedEffects) do
+        if obj and obj.Parent then
+            pcall(function()
+                obj.Enabled = saved.Enabled
+            end)
+        end
+    end
+    LowGfx.SavedEffects = setmetatable({}, { __mode = "k" })
+
+    print("[UA Killer Hub | GFX] Low GFX вимкнено (графіку відновлено).")
+end
 
 local function cleanupFlight()
     if not flightState then return end
@@ -2008,6 +2228,8 @@ local function shutdownScript()
     _G.InstantFarm      = false
     _G.AutoBuyLucky1M   = false
     autoBuy1MThreadActive = false
+    _G.LowGFX           = false
+    pcall(LowGfx.disable)
 
     farmSessionId        = farmSessionId + 1
     farmThreadActive     = false
@@ -2574,7 +2796,7 @@ local farmPage = createTab("Автофарм", "⚡")
 local shopPage = createTab("Магазин",  "🛒")
 local miscPage = createTab("Інше",     "⚙")
 
-local autoLoadToggle, jumpPowerSlider, flySpeedSlider
+local autoLoadToggle, lowGfxToggle, jumpPowerSlider, flySpeedSlider
 local itemEspToggle, autoCandyToggle, instantFarmToggle
 local autoBuyToggle, autoBuy1MToggle, antiAfkToggle, noclipToggle, autoRespawnToggle
 local itemToggleControls = {}
@@ -2605,6 +2827,20 @@ createSection(mainPage, "Головна", "Характеристики")
 jumpPowerSlider = createSlider(mainPage, "Головна", "Висота стрибка (JumpPower)", 50, 200, 1, JP_Value, function(val)
     JP_Value = val
     applyJumpPower()
+end)
+
+createSection(mainPage, "Головна", "Оптимізація та FPS")
+
+lowGfxToggle = createToggle(mainPage, "Головна", "Low GFX (Максимальний FPS)", _G.LowGFX, function(value)
+    if isShutdown then return end
+    manuallyChanged.LowGFX = true
+    if value then
+        LowGfx.enable()
+        showNotification("Оптимізація", "Low GFX увімкнено! FPS підвищено.", 3)
+    else
+        LowGfx.disable()
+        showNotification("Оптимізація", "Low GFX вимкнено (графіку відновлено).", 3)
+    end
 end)
 
 -- ── Автофарм ─────────────────────────────────────────────
@@ -2787,6 +3023,7 @@ saveCurrentConfig = function()
         ItemESP          = _G.ItemESP,
         InstantFarm      = _G.InstantFarm,
         ItemFarm         = _G.ItemFarm,
+        LowGFX           = _G.LowGFX,
         AutoSell         = _G.AutoSell,
         AutoEventCandy   = _G.AutoEventCandy,
         AutoBuy          = _G.AutoBuy,
@@ -2812,6 +3049,11 @@ loadCurrentConfig = function(isAutoLoad)
     if not data then return false end
 
     if data.JumpPower and jumpPowerSlider then jumpPowerSlider:Set(data.JumpPower, true) end
+    if data.LowGFX ~= nil and not isShutdown then
+        _G.LowGFX = (data.LowGFX == true)
+        if lowGfxToggle then lowGfxToggle:Set(_G.LowGFX, false) end
+        if _G.LowGFX then LowGfx.enable() else LowGfx.disable() end
+    end
     if data.FlySpeed  and flySpeedSlider  then flySpeedSlider:Set(data.FlySpeed, true) end
 
     if type(data.SelectedItems) == "table" and not isShutdown then
@@ -2900,6 +3142,16 @@ local function runSteppedAutoLoad()
     if isShutdown then return end
 
     local steps = {
+        {
+            key = "LowGFX",
+            control = lowGfxToggle,
+            label = "Low GFX (FPS Boost)",
+            activate = function(val)
+                _G.LowGFX = (val == true)
+                if lowGfxToggle then lowGfxToggle:Set(_G.LowGFX, false) end
+                if _G.LowGFX then LowGfx.enable() else LowGfx.disable() end
+            end,
+        },
         {
             key = "InstantFarm",
             control = instantFarmToggle,
