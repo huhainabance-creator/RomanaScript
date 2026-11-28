@@ -124,6 +124,7 @@ end)
 _G.AutoSell        = false
 _G.AutoEventCandy  = false
 _G.AutoBuy         = false
+_G.AutoBuyLucky1M  = false -- Автокупівля Lucky Arrow при досягненні ліміту в 1,000,000 $
 _G.ItemFarm        = false
 _G.InstantFarm     = true -- Інстант-фарм через SafeZone телепортацію з 1.txt (без кіків)
 _G.ItemESP         = false
@@ -194,6 +195,7 @@ local manuallyChanged = {
     AutoSell         = false,
     AutoEventCandy   = false,
     AutoBuy          = false,
+    AutoBuyLucky1M   = false,
     ItemESP          = false,
     AntiAFK          = false,
     StandaloneNoClip = false,
@@ -1418,6 +1420,59 @@ local function sellSingleItemWithRetries(item, maxRetries)
 end
 
 -- =======================================================
+-- СИСТЕМА АВТОКУПІВЛІ LUCKY ARROW ПРИ ЛІМІТІ ГРОШЕЙ (1M)
+-- =======================================================
+local autoBuy1MThreadActive = false
+
+local function getPlayerMoney()
+    local ps = player:FindFirstChild("PlayerStats")
+    if ps then
+        local m = ps:FindFirstChild("Money")
+        if m then return tonumber(m.Value) or 0 end
+    end
+    local ls = player:FindFirstChild("leaderstats")
+    if ls then
+        local m = ls:FindFirstChild("Money") or ls:FindFirstChild("Cash")
+        if m then return tonumber(m.Value) or 0 end
+    end
+    return 0
+end
+
+local function buyLuckyArrow()
+    pcall(function()
+        local char = player.Character
+        local remote = char and char:FindFirstChild("RemoteEvent")
+        if remote then
+            remote:FireServer("PurchaseShopItem", { ItemName = "1x Lucky Arrow" })
+        end
+    end)
+end
+
+local function startAutoBuy1MThread()
+    if autoBuy1MThreadActive or isShutdown then return end
+    autoBuy1MThreadActive = true
+
+    task.spawn(function()
+        print("[UA Killer Hub | Shop] Потік автокупівлі Lucky при 1M ($1,000,000) активовано.")
+        while _G.AutoBuyLucky1M and autoBuy1MThreadActive and not isShutdown do
+            task.wait(1.5)
+            if not _G.AutoBuyLucky1M or isShutdown then break end
+
+            local currentMoney = getPlayerMoney()
+            -- Ліміт грошей у грі становить 1,000,000 $
+            if currentMoney >= 1000000 then
+                print(string.format("[UA Killer Hub | Shop] Досягнуто ліміт грошей: %d $. Купівля Lucky Arrow...", currentMoney))
+                buyLuckyArrow()
+                showNotification("Магазин", string.format("Гроші 1M (%d$) -> Куплено Lucky Arrow!", currentMoney), 4)
+                task.wait(3.0) -- Пауза після покупки, щоб сервер оновив баланс
+            end
+        end
+        autoBuy1MThreadActive = false
+        print("[UA Killer Hub | Shop] Потік автокупівлі Lucky при 1M зупинено.")
+    end)
+end
+
+-- =======================================================
 -- СИСТЕМА ФІКСОВАНОГО ЗНІМКА (SNAPSHOT) ТА ЦИКЛУ ПРОДАЖУ
 -- =======================================================
 local autoSellToggle       = nil
@@ -1951,6 +2006,8 @@ local function shutdownScript()
     _G.StandaloneNoClip = false
     _G.AutoRespawn      = false
     _G.InstantFarm      = false
+    _G.AutoBuyLucky1M   = false
+    autoBuy1MThreadActive = false
 
     farmSessionId        = farmSessionId + 1
     farmThreadActive     = false
@@ -2519,7 +2576,7 @@ local miscPage = createTab("Інше",     "⚙")
 
 local autoLoadToggle, jumpPowerSlider, flySpeedSlider
 local itemEspToggle, autoCandyToggle, instantFarmToggle
-local autoBuyToggle, antiAfkToggle, noclipToggle, autoRespawnToggle
+local autoBuyToggle, autoBuy1MToggle, antiAfkToggle, noclipToggle, autoRespawnToggle
 local itemToggleControls = {}
 
 local saveCurrentConfig, loadCurrentConfig
@@ -2647,6 +2704,15 @@ autoBuyToggle = createToggle(shopPage, "Магазин", "Автокупівля
     end
 end)
 
+autoBuy1MToggle = createToggle(shopPage, "Магазин", "Купівля Lucky при 1M ($1,000,000)", _G.AutoBuyLucky1M, function(value)
+    if isShutdown then return end
+    manuallyChanged.AutoBuyLucky1M = true
+    _G.AutoBuyLucky1M = value
+    if value then
+        startAutoBuy1MThread()
+    end
+end)
+
 -- ── Інше ─────────────────────────────────────────────────
 createSection(miscPage, "Інше", "Додаткові функції")
 
@@ -2724,6 +2790,7 @@ saveCurrentConfig = function()
         AutoSell         = _G.AutoSell,
         AutoEventCandy   = _G.AutoEventCandy,
         AutoBuy          = _G.AutoBuy,
+        AutoBuyLucky1M   = _G.AutoBuyLucky1M,
         AntiAFK          = _G.AntiAFK,
         StandaloneNoClip = _G.StandaloneNoClip,
         AutoRespawn      = _G.AutoRespawn,
@@ -2765,6 +2832,11 @@ loadCurrentConfig = function(isAutoLoad)
     if data.StandaloneNoClip ~= nil and noclipToggle       then noclipToggle:Set(data.StandaloneNoClip, true) end
     if data.AutoEventCandy   ~= nil and autoCandyToggle    then autoCandyToggle:Set(data.AutoEventCandy, true) end
     if data.AutoBuy          ~= nil and autoBuyToggle      then autoBuyToggle:Set(data.AutoBuy, true) end
+    if data.AutoBuyLucky1M   ~= nil and not isShutdown then
+        _G.AutoBuyLucky1M = (data.AutoBuyLucky1M == true)
+        if autoBuy1MToggle then autoBuy1MToggle:Set(_G.AutoBuyLucky1M, false) end
+        if _G.AutoBuyLucky1M then startAutoBuy1MThread() end
+    end
 
     if data.InstantFarm ~= nil and not isShutdown then
         _G.InstantFarm = (data.InstantFarm == true)
@@ -2867,6 +2939,16 @@ local function runSteppedAutoLoad()
             activate = function(val)
                 _G.AutoBuy = (val == true)
                 if autoBuyToggle then autoBuyToggle:Set(_G.AutoBuy, false) end
+            end,
+        },
+        {
+            key = "AutoBuyLucky1M",
+            control = autoBuy1MToggle,
+            label = "Купівля Lucky при 1M",
+            activate = function(val)
+                _G.AutoBuyLucky1M = (val == true)
+                if autoBuy1MToggle then autoBuy1MToggle:Set(_G.AutoBuyLucky1M, false) end
+                if _G.AutoBuyLucky1M then startAutoBuy1MThread() end
             end,
         },
         {
